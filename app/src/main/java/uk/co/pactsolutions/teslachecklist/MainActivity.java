@@ -557,6 +557,12 @@ public class MainActivity extends Activity {
             countdownView.setGravity(Gravity.CENTER);
             countdownView.setPadding(dp(12), dp(10), dp(12), dp(10));
             countdownView.setBackground(rounded(SURFACE_2, dp(12), TESLA_RED, 1));
+            if (parseOrderDate(modelPrefs.getString("order_collection_date", "")) != null) {
+                countdownView.setClickable(true);
+                countdownView.setFocusable(true);
+                countdownView.setContentDescription(countdown + ". Tap to view live countdown.");
+                countdownView.setOnClickListener(v -> showCollectionCountdown(modelPrefs));
+            }
             LinearLayout.LayoutParams countdownParams = new LinearLayout.LayoutParams(-1, -2);
             countdownParams.setMargins(0, dp(4), 0, dp(10));
             card.addView(countdownView, countdownParams);
@@ -1307,6 +1313,73 @@ public class MainActivity extends Activity {
                 + " day" + (daysToEnd == 1 ? "" : "s") + " remaining";
         }
         return "Estimated delivery window has passed";
+    }
+
+    private Date collectionDateTime(android.content.SharedPreferences orderPrefs) {
+        String date = orderPrefs.getString("order_collection_date", "").trim();
+        if (date.isEmpty()) return null;
+        String time = orderPrefs.getString("order_collection_time", "").trim();
+        SimpleDateFormat format = new SimpleDateFormat(
+            time.isEmpty() ? "dd MMMM yyyy" : "dd MMMM yyyy HH:mm",
+            Locale.UK
+        );
+        format.setLenient(false);
+        try {
+            return format.parse(time.isEmpty() ? date : date + " " + time);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void showCollectionCountdown(android.content.SharedPreferences orderPrefs) {
+        Date collection = collectionDateTime(orderPrefs);
+        if (collection == null) return;
+        boolean hasTime = !orderPrefs.getString("order_collection_time", "").trim().isEmpty();
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(24), dp(12), dp(24), dp(8));
+        TextView timer = text("", 28, TEXT, true);
+        timer.setGravity(Gravity.CENTER);
+        timer.setPadding(0, dp(12), 0, dp(12));
+        content.addView(timer, new LinearLayout.LayoutParams(-1, -2));
+        TextView dateLabel = text(
+            "Collection: " + orderPrefs.getString("order_collection_date", "")
+                + (hasTime ? " at " + orderPrefs.getString("order_collection_time", "") : ""),
+            15, MUTED, false
+        );
+        dateLabel.setGravity(Gravity.CENTER);
+        content.addView(dateLabel);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("Collection Countdown")
+            .setView(content)
+            .setPositiveButton("Close", null)
+            .create();
+        Handler handler = new Handler(Looper.getMainLooper());
+        Runnable updater = new Runnable() {
+            @Override public void run() {
+                long remaining = collection.getTime() - System.currentTimeMillis();
+                if (!hasTime && daysFromToday(collection) == 0) {
+                    timer.setText("Collection day is today");
+                } else if (remaining <= 0) {
+                    timer.setText(hasTime ? "Collection time has arrived" : "Collection day has passed");
+                } else {
+                    long totalSeconds = remaining / 1000;
+                    long days = totalSeconds / 86400;
+                    long hours = (totalSeconds % 86400) / 3600;
+                    long minutes = (totalSeconds % 3600) / 60;
+                    long seconds = totalSeconds % 60;
+                    timer.setText(String.format(
+                        Locale.UK, "%d days  %02d:%02d:%02d", days, hours, minutes, seconds
+                    ));
+                    handler.postDelayed(this, 1000);
+                }
+            }
+        };
+        dialog.setOnShowListener(ignored -> updater.run());
+        dialog.setOnDismissListener(ignored -> handler.removeCallbacks(updater));
+        dialog.show();
     }
 
     private void saveOrderFields(
