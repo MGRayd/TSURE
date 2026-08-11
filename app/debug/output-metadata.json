@@ -11,9 +11,9 @@
       "type": "SINGLE",
       "filters": [],
       "attributes": [],
-      "versionCode": 1,
-      "versionName": "1.0",
-      "outputFile": "TesSure-debug-1.0.apk"
+      "versionCode": 10001,
+      "versionName": "1.0.1",
+      "outputFile": "TesSure-debug-1.0.1.apk"
     }
   ],
   "elementType": "File",

@@ -1,17 +1,32 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
+
+def tesSureVersion = '1.0.1'
+def tesSureVersionParts = tesSureVersion.tokenize('.').collect { it as int }
+if (tesSureVersionParts.size() != 3 || tesSureVersionParts.any { it < 0 || it > 99 }) {
+    throw new GradleException('tesSureVersion must use major.minor.patch with values from 0 to 99')
+}
+def tesSureVersionCode =
+    (tesSureVersionParts[0] * 10000) +
+    (tesSureVersionParts[1] * 100) +
+    tesSureVersionParts[2]
 
 android {
     namespace 'uk.co.pactsolutions.teslachecklist'
-    compileSdk 35
+    compileSdk 36
+
+    kotlinOptions {
+        jvmTarget = '11'
+    }
 
     defaultConfig {
         applicationId 'uk.co.pactsolutions.teslachecklist'
-        minSdk 23
-        targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        minSdk 29
+        targetSdk 36
+        versionCode tesSureVersionCode
+        versionName tesSureVersion
     }
 
     buildTypes {
@@ -25,4 +40,8 @@ android {
             outputFileName = "TesSure-${variant.name}-${variant.versionName}.apk"
         }
     }
+}
+
+dependencies {
+    implementation 'com.google.code.gson:gson:2.13.2'
 }
