@@ -877,13 +877,16 @@ public class MainActivity extends Activity {
         intro.setPadding(0, 0, 0, dp(12));
         root.addView(intro);
 
+        LinearLayout orderCard = addOrderStageCard(
+            root, "01", "ORDER", "Details that identify your Tesla order."
+        );
         EditText orderNumber = addOrderField(
-            root, "Order number", "Example: RN123456789",
+            orderCard, "Order number", "Example: RN123456789",
             orderPrefs.getString("order_number", ""),
             android.text.InputType.TYPE_CLASS_TEXT
         );
         EditText vin = addOrderField(
-            root, "VIN", "17-character vehicle identification number",
+            orderCard, "VIN", "17-character vehicle identification number",
             orderPrefs.getString("order_vin", ""),
             android.text.InputType.TYPE_CLASS_TEXT
                 | android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
@@ -892,46 +895,85 @@ public class MainActivity extends Activity {
             new android.text.InputFilter.AllCaps(),
             new android.text.InputFilter.LengthFilter(17)
         });
-        TextView eddHeading = text("Estimated delivery window", 16, TESLA_RED, true);
-        eddHeading.setPadding(dp(2), dp(4), dp(2), dp(8));
-        root.addView(eddHeading);
-        EditText eddStart = addOrderField(
-            root, "EDD start date", "First estimated delivery date",
+        TextView vinHint = text(
+            "This VIN appears beside the collection-day VIN check.",
+            13, MUTED, false
+        );
+        orderCard.addView(vinHint);
+
+        addTimelineConnector(root);
+        LinearLayout eddCard = addOrderStageCard(
+            root, "02", "ESTIMATED DELIVERY", "The delivery window shown in your Tesla account."
+        );
+        LinearLayout eddDates = new LinearLayout(this);
+        eddDates.setOrientation(LinearLayout.HORIZONTAL);
+        eddCard.addView(eddDates, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout eddStartColumn = new LinearLayout(this);
+        eddStartColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout eddEndColumn = new LinearLayout(this);
+        eddEndColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams dateColumnParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        dateColumnParams.setMargins(0, 0, dp(5), 0);
+        eddDates.addView(eddStartColumn, dateColumnParams);
+        LinearLayout.LayoutParams endColumnParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        endColumnParams.setMargins(dp(5), 0, 0, 0);
+        eddDates.addView(eddEndColumn, endColumnParams);
+        EditText eddStart = addOrderSelectorField(
+            eddStartColumn, "FROM", "Choose date",
             orderPrefs.getString("order_edd_start", ""),
-            android.text.InputType.TYPE_CLASS_TEXT
+            "Choose estimated delivery start date"
         );
         makeDatePickerField(eddStart);
-        EditText eddEnd = addOrderField(
-            root, "EDD end date", "Last estimated delivery date",
+        EditText eddEnd = addOrderSelectorField(
+            eddEndColumn, "TO", "Choose date",
             orderPrefs.getString("order_edd_end", ""),
-            android.text.InputType.TYPE_CLASS_TEXT
+            "Choose estimated delivery end date"
         );
         makeDatePickerField(eddEnd);
-        TextView collectionHeading = text("Collection appointment", 16, TESLA_RED, true);
-        collectionHeading.setPadding(dp(2), dp(4), dp(2), dp(8));
-        root.addView(collectionHeading);
-        EditText collectionDate = addOrderField(
-            root, "Collection date", "Example: 14 August 2026",
+
+        addTimelineConnector(root);
+        LinearLayout collectionCard = addOrderStageCard(
+            root, "03", "COLLECTION", "Add this once Tesla confirms your appointment."
+        );
+        LinearLayout collectionContent = new LinearLayout(this);
+        collectionContent.setOrientation(LinearLayout.VERTICAL);
+        collectionCard.addView(collectionContent, new LinearLayout.LayoutParams(-1, -2));
+        boolean hasCollection = !orderPrefs.getString("order_collection_date", "").trim().isEmpty()
+            || !orderPrefs.getString("order_collection_time", "").trim().isEmpty()
+            || !orderPrefs.getString("order_collection_location_id", "").trim().isEmpty();
+        collectionContent.setVisibility(hasCollection ? View.VISIBLE : View.GONE);
+
+        LinearLayout collectionDateTime = new LinearLayout(this);
+        collectionDateTime.setOrientation(LinearLayout.HORIZONTAL);
+        collectionContent.addView(collectionDateTime, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout collectionDateColumn = new LinearLayout(this);
+        collectionDateColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout collectionTimeColumn = new LinearLayout(this);
+        collectionTimeColumn.setOrientation(LinearLayout.VERTICAL);
+        collectionDateTime.addView(collectionDateColumn, dateColumnParams);
+        collectionDateTime.addView(collectionTimeColumn, endColumnParams);
+        EditText collectionDate = addOrderSelectorField(
+            collectionDateColumn, "DATE", "Choose date",
             orderPrefs.getString("order_collection_date", ""),
-            android.text.InputType.TYPE_CLASS_TEXT
+            "Choose collection date"
         );
         makeDatePickerField(collectionDate);
-        EditText collectionTime = addOrderField(
-            root, "Collection time", "Example: 10:30",
+        EditText collectionTime = addOrderSelectorField(
+            collectionTimeColumn, "TIME", "Choose time",
             orderPrefs.getString("order_collection_time", ""),
-            android.text.InputType.TYPE_CLASS_DATETIME
-                | android.text.InputType.TYPE_DATETIME_VARIATION_TIME
+            "Choose collection time"
         );
         makeTimePickerField(collectionTime);
         CollectionLocationSelection collectionLocation =
-            addCollectionLocationSelector(root, orderPrefs);
-
-        TextView vinHint = text(
-            "The saved VIN appears with the collection-day VIN check.",
-            13, MUTED, false
-        );
-        vinHint.setPadding(dp(2), 0, dp(2), dp(8));
-        root.addView(vinHint);
+            addCollectionLocationSelector(collectionContent, orderPrefs);
+        if (!hasCollection) {
+            Button addCollection = secondaryButton("Add collection appointment");
+            addCollection.setOnClickListener(v -> {
+                collectionContent.setVisibility(View.VISIBLE);
+                v.setVisibility(View.GONE);
+            });
+            collectionCard.addView(addCollection, new LinearLayout.LayoutParams(-1, dp(48)));
+        }
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
@@ -940,7 +982,7 @@ public class MainActivity extends Activity {
         buttons.addView(cancel, weightParams());
         buttons.addView(save, weightParams());
         LinearLayout.LayoutParams buttonRowParams = new LinearLayout.LayoutParams(-1, dp(48));
-        buttonRowParams.setMargins(0, dp(6), 0, 0);
+        buttonRowParams.setMargins(0, dp(18), 0, 0);
         root.addView(buttons, buttonRowParams);
 
         Runnable archiveAction = () -> {
@@ -1038,11 +1080,16 @@ public class MainActivity extends Activity {
         CollectionLocationSelection selection = new CollectionLocationSelection();
         selection.selectedId = orderPrefs.getString("order_collection_location_id", "");
 
-        TextView label = text("Collection location", 14, TEXT, true);
-        label.setPadding(dp(2), 0, dp(2), dp(6));
+        TextView label = text("LOCATION", 11, MUTED, true);
+        label.setLetterSpacing(0.08f);
+        label.setPadding(dp(2), dp(2), dp(2), dp(6));
         root.addView(label);
 
-        selection.selector = secondaryButton("Choose collection location");
+        selection.selector = baseButton("Choose collection location");
+        selection.selector.setTextColor(TEXT);
+        selection.selector.setTextSize(15);
+        selection.selector.setAllCaps(false);
+        selection.selector.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
         selection.selector.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         selection.selector.setPadding(dp(14), 0, dp(14), 0);
         LinearLayout.LayoutParams selectorParams = new LinearLayout.LayoutParams(-1, dp(52));
@@ -1454,6 +1501,87 @@ public class MainActivity extends Activity {
             .remove("order_collection_custom_postcode")
             .remove("order_collection_custom_country")
             .apply();
+    }
+
+    private LinearLayout addOrderStageCard(
+        LinearLayout root,
+        String number,
+        String title,
+        String subtitle
+    ) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(16), dp(16), dp(16));
+        card.setBackground(rounded(SURFACE, dp(18), BORDER, 1));
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        card.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView marker = text(number, 12, TEXT, true);
+        marker.setGravity(Gravity.CENTER);
+        marker.setBackground(rounded(TESLA_RED, dp(18), TESLA_RED, 0));
+        heading.addView(marker, new LinearLayout.LayoutParams(dp(36), dp(36)));
+
+        LinearLayout headingText = new LinearLayout(this);
+        headingText.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams headingTextParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        headingTextParams.setMargins(dp(12), 0, 0, 0);
+        heading.addView(headingText, headingTextParams);
+
+        TextView titleView = text(title, 14, TEXT, true);
+        titleView.setLetterSpacing(0.08f);
+        headingText.addView(titleView);
+        TextView subtitleView = text(subtitle, 13, MUTED, false);
+        subtitleView.setPadding(0, dp(2), 0, 0);
+        headingText.addView(subtitleView);
+
+        Space space = new Space(this);
+        card.addView(space, new LinearLayout.LayoutParams(1, dp(14)));
+
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.setMargins(0, 0, 0, 0);
+        root.addView(card, cardParams);
+        return card;
+    }
+
+    private void addTimelineConnector(LinearLayout root) {
+        LinearLayout connectorRow = new LinearLayout(this);
+        connectorRow.setGravity(Gravity.CENTER_HORIZONTAL);
+        View connector = new View(this);
+        connector.setBackgroundColor(TESLA_RED);
+        connectorRow.addView(connector, new LinearLayout.LayoutParams(dp(2), dp(22)));
+        root.addView(connectorRow, new LinearLayout.LayoutParams(-1, dp(22)));
+    }
+
+    private EditText addOrderSelectorField(
+        LinearLayout root,
+        String label,
+        String hint,
+        String value,
+        String contentDescription
+    ) {
+        TextView fieldLabel = text(label, 11, MUTED, true);
+        fieldLabel.setLetterSpacing(0.08f);
+        fieldLabel.setPadding(dp(2), 0, dp(2), dp(6));
+        root.addView(fieldLabel);
+
+        EditText input = new EditText(this);
+        input.setText(value);
+        input.setHint(hint);
+        input.setContentDescription(contentDescription);
+        input.setTextColor(TEXT);
+        input.setHintTextColor(MUTED);
+        input.setTextSize(14);
+        input.setSingleLine(true);
+        input.setGravity(Gravity.CENTER_VERTICAL);
+        input.setPadding(dp(12), 0, dp(10), 0);
+        input.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
+        params.setMargins(0, 0, 0, dp(12));
+        root.addView(input, params);
+        return input;
     }
 
     private EditText addOrderField(
