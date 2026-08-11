@@ -1295,15 +1295,43 @@ public class MainActivity extends Activity {
         String model,
         boolean fromChecklist
     ) {
-        StringBuilder summary = new StringBuilder();
-        appendImportedField(summary, "RN", order.referenceNumber);
-        appendImportedField(summary, "VIN", order.vin);
-        appendImportedField(summary, "EDD", dateRange(order.eddStart, order.eddEnd));
-        appendImportedField(summary, "Collection", collectionSummary(order));
-        if (summary.length() == 0) summary.append("Tesla returned the order, but none of the supported delivery fields were present.");
+        LinearLayout preview = new LinearLayout(this);
+        preview.setOrientation(LinearLayout.VERTICAL);
+        preview.setPadding(dp(20), dp(4), dp(20), 0);
+        TextView eyebrow = text("TESLA ORDER FOUND", 11, TESLA_RED, true);
+        eyebrow.setLetterSpacing(0.1f);
+        preview.addView(eyebrow);
+        TextView heading = text("Import delivery details?", 22, TEXT, true);
+        heading.setPadding(0, dp(5), 0, dp(4));
+        preview.addView(heading);
+        TextView guidance = text(
+            "Review the fields Tesla returned. Only these values will be updated.",
+            13, MUTED, false
+        );
+        guidance.setPadding(0, 0, 0, dp(14));
+        preview.addView(guidance);
+
+        LinearLayout data = new LinearLayout(this);
+        data.setOrientation(LinearLayout.VERTICAL);
+        data.setPadding(dp(14), dp(4), dp(14), dp(4));
+        data.setBackground(rounded(SURFACE_2, dp(14), BORDER, 1));
+        boolean hasData = false;
+        hasData |= addTeslaPreviewRow(data, "RN", order.referenceNumber);
+        hasData |= addTeslaPreviewRow(data, "VIN", order.vin);
+        hasData |= addTeslaPreviewRow(data, "EDD", dateRange(order.eddStart, order.eddEnd));
+        hasData |= addTeslaPreviewRow(data, "COLLECTION", collectionSummary(order));
+        if (!hasData) {
+            TextView empty = text(
+                "Tesla returned the order, but no supported delivery fields were present.",
+                13, MUTED, false
+            );
+            empty.setPadding(0, dp(10), 0, dp(10));
+            data.addView(empty);
+        }
+        preview.addView(data, new LinearLayout.LayoutParams(-1, -2));
+
         new AlertDialog.Builder(this)
-            .setTitle("Import this Tesla order?")
-            .setMessage(summary.toString())
+            .setView(preview)
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Import details", (dialog, which) -> {
                 android.content.SharedPreferences orderPrefs = modelPreferences(model);
@@ -1315,16 +1343,29 @@ public class MainActivity extends Activity {
                 if (!order.collectionDate.isEmpty()) editor.putString("order_collection_date", order.collectionDate);
                 if (!order.collectionTime.isEmpty()) editor.putString("order_collection_time", order.collectionTime);
                 editor.apply();
+                showingOrderDetails = false;
+                orderDetailsBackAction = null;
+                pendingTeslaModel = null;
+                showLandingPage();
                 Toast.makeText(this, "Tesla order imported", Toast.LENGTH_SHORT).show();
-                showOrderDetailsPage(fromChecklist, model);
             })
             .show();
     }
 
-    private void appendImportedField(StringBuilder summary, String label, String value) {
-        if (value == null || value.trim().isEmpty()) return;
-        if (summary.length() > 0) summary.append("\n");
-        summary.append(label).append(": ").append(value.trim());
+    private boolean addTeslaPreviewRow(LinearLayout root, String label, String value) {
+        if (value == null || value.trim().isEmpty()) return false;
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(10), 0, dp(10));
+        TextView labelView = text(label, 10, MUTED, true);
+        labelView.setLetterSpacing(0.08f);
+        row.addView(labelView, new LinearLayout.LayoutParams(dp(86), -2));
+        TextView valueView = text(value.trim(), 14, TEXT, true);
+        valueView.setGravity(Gravity.END);
+        row.addView(valueView, new LinearLayout.LayoutParams(0, -2, 1f));
+        root.addView(row);
+        return true;
     }
 
     private String dateRange(String start, String end) {
