@@ -34,11 +34,13 @@ final class TeslaOrderClient {
         String referenceNumber = "";
         String vin = "";
         String modelCode = "";
+        String countryCode = "";
         String eddStart = "";
         String eddEnd = "";
         String collectionDate = "";
         String collectionTime = "";
         String collectionSummary = "";
+        String collectionCentre = "";
 
         String title() {
             String model = modelCode.isEmpty() ? "Tesla order" : "Model " + modelCode;
@@ -152,6 +154,7 @@ final class TeslaOrderClient {
         order.referenceNumber = firstString(json, "referenceNumber", "orderNumber");
         order.vin = firstString(json, "vin", "vehicleVin").toUpperCase(Locale.UK);
         order.modelCode = firstString(json, "modelCode", "model");
+        order.countryCode = firstString(json, "countryCode", "country").toUpperCase(Locale.UK);
         return order;
     }
 
@@ -165,9 +168,13 @@ final class TeslaOrderClient {
         order.eddEnd = compactDate(!end.isEmpty() ? end : parsedWindow[1]);
 
         String appointment = findString(
-            details, "appointmentDateTime", "apptDateTime", "scheduledDateTime", "deliveryAppointment"
+            details, "deliveryAppointmentDate", "appointmentDateTime", "apptDateTime",
+            "scheduledDateTime", "deliveryAppointment"
         );
         order.collectionSummary = findString(details, "apptDateTimeAddressStr", "appointmentDisplay");
+        order.collectionCentre = findString(
+            details, "deliveryAddressTitle", "deliveryCenterName", "deliveryCentreName"
+        );
         Date appointmentDate = parseDate(appointment);
         if (appointmentDate == null) appointmentDate = parseDate(order.collectionSummary);
         if (appointmentDate != null) {

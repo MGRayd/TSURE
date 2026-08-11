@@ -1320,6 +1320,12 @@ public class MainActivity extends Activity {
         hasData |= addTeslaPreviewRow(data, "VIN", order.vin);
         hasData |= addTeslaPreviewRow(data, "EDD", dateRange(order.eddStart, order.eddEnd));
         hasData |= addTeslaPreviewRow(data, "COLLECTION", collectionSummary(order));
+        TeslaCollectionLocation matchedCentre = matchImportedCollectionCentre(order);
+        hasData |= addTeslaPreviewRow(
+            data,
+            "CENTRE",
+            matchedCentre == null ? order.collectionCentre : matchedCentre.getLocationName()
+        );
         if (!hasData) {
             TextView empty = text(
                 "Tesla returned the order, but no supported delivery fields were present.",
@@ -1342,6 +1348,13 @@ public class MainActivity extends Activity {
                 if (!order.eddEnd.isEmpty()) editor.putString("order_edd_end", order.eddEnd);
                 if (!order.collectionDate.isEmpty()) editor.putString("order_collection_date", order.collectionDate);
                 if (!order.collectionTime.isEmpty()) editor.putString("order_collection_time", order.collectionTime);
+                if (matchedCentre != null) {
+                    editor.putString("order_collection_location_id", matchedCentre.getId());
+                    editor.remove("order_collection_location");
+                } else if (!order.collectionCentre.isEmpty()) {
+                    editor.remove("order_collection_location_id");
+                    editor.putString("order_collection_location", order.collectionCentre);
+                }
                 editor.apply();
                 showingOrderDetails = false;
                 orderDetailsBackAction = null;
@@ -1379,6 +1392,41 @@ public class MainActivity extends Activity {
             return order.collectionDate + (order.collectionTime.isEmpty() ? "" : " at " + order.collectionTime);
         }
         return order.collectionSummary;
+    }
+
+    private TeslaCollectionLocation matchImportedCollectionCentre(TeslaOrderClient.TeslaOrder order) {
+        String imported = normalizeCollectionCentre(order.collectionCentre);
+        if (imported.isEmpty()) return null;
+        TeslaCollectionLocation best = null;
+        int bestScore = 0;
+        for (TeslaCollectionLocation location : locationRepository.getAllLocationsNow()) {
+            if (!order.countryCode.isEmpty()
+                && !order.countryCode.equalsIgnoreCase(location.getCountryCode())) continue;
+            String city = normalizeCollectionCentre(location.getCity());
+            String name = normalizeCollectionCentre(location.getLocationName());
+            String postcode = normalizeCollectionCentre(location.getPostcode());
+            int score = 0;
+            if (!city.isEmpty() && imported.contains(city)) score += 10;
+            if (!postcode.isEmpty() && imported.contains(postcode)) score += 12;
+            for (String word : name.split(" ")) {
+                if (word.length() >= 4 && imported.contains(word)) score++;
+            }
+            if (score > bestScore) {
+                best = location;
+                bestScore = score;
+            }
+        }
+        return bestScore >= 10 ? best : null;
+    }
+
+    private String normalizeCollectionCentre(String value) {
+        if (value == null) return "";
+        return value.toLowerCase(Locale.UK)
+            .replace("&", " ")
+            .replaceAll("[^a-z0-9]+", " ")
+            .replaceAll("\\b(tesla|delivery|collection|certified|pre|owned|service|centre|center)\\b", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
     }
 
     private void showOrderDetailsMenu(
