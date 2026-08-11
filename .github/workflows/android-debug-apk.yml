@@ -31,5 +31,5 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: tessure-debug-apk
+          name: tsure-debug-apk
           path: app/build/outputs/apk/debug/*.apk

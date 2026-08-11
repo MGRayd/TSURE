@@ -27,12 +27,16 @@ public class MainActivity extends Activity {
     private static final int BORDER = Color.rgb(64, 72, 90);
     private static final int REQUEST_PICK_ISSUE_PHOTO = 2001;
     private static final int REQUEST_TAKE_ISSUE_PHOTO = 2002;
+    private static final int REQUEST_TESLA_AUTH = 2003;
 
     private LinearLayout list;
     private TextView progress;
     private ProgressBar progressBar;
     private Spinner sectionSpinner;
     private ArrayAdapter<String> sectionAdapter;
+    private Button previousSectionButton;
+    private Button nextSectionButton;
+    private TextView sectionNavigationLabel;
     private boolean updatingSectionSpinner = false;
     private final ArrayList<ItemRow> rows = new ArrayList<>();
     private final ArrayList<CheckItem> activeChecks = new ArrayList<>();
@@ -47,8 +51,11 @@ public class MainActivity extends Activity {
     private AssetTeslaLocationRepository locationRepository;
     private boolean showingOrderDetails = false;
     private boolean orderDetailsOpenedFromChecklist = false;
+    private Runnable orderDetailsBackAction;
     private boolean showingArchives = false;
     private boolean archivesOpenedFromChecklist = false;
+    private String pendingTeslaModel;
+    private boolean pendingTeslaFromChecklist;
 
     private static class CheckItem {
         String section;
@@ -111,6 +118,13 @@ public class MainActivity extends Activity {
     private static class CollectionLocationSelection {
         String selectedId;
         Button selector;
+        Runnable onChanged;
+    }
+
+    private static class OrderStageSection {
+        LinearLayout card;
+        LinearLayout content;
+        TextView disclosure;
     }
 
     private class ItemRow {
@@ -464,7 +478,7 @@ public class MainActivity extends Activity {
         applySystemBarPadding(root, dp(22), dp(28), dp(22), dp(20));
         scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
 
-        TextView title = text("TesSure", 30, TESLA_RED, true);
+        TextView title = text("TSURE", 30, TESLA_RED, true);
         title.setGravity(Gravity.CENTER);
         root.addView(title);
 
@@ -557,6 +571,12 @@ public class MainActivity extends Activity {
             countdownView.setGravity(Gravity.CENTER);
             countdownView.setPadding(dp(12), dp(10), dp(12), dp(10));
             countdownView.setBackground(rounded(SURFACE_2, dp(12), TESLA_RED, 1));
+            if (parseOrderDate(modelPrefs.getString("order_collection_date", "")) != null) {
+                countdownView.setClickable(true);
+                countdownView.setFocusable(true);
+                countdownView.setContentDescription(countdown + ". Tap to view live countdown.");
+                countdownView.setOnClickListener(v -> showCollectionCountdown(modelPrefs));
+            }
             LinearLayout.LayoutParams countdownParams = new LinearLayout.LayoutParams(-1, -2);
             countdownParams.setMargins(0, dp(4), 0, dp(10));
             card.addView(countdownView, countdownParams);
@@ -669,6 +689,9 @@ public class MainActivity extends Activity {
         showingArchives = false;
         sectionSpinner = null;
         sectionAdapter = null;
+        previousSectionButton = null;
+        nextSectionButton = null;
+        sectionNavigationLabel = null;
         reloadActiveChecks();
 
         LinearLayout root = new LinearLayout(this);
@@ -714,6 +737,35 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams progressBarParams = new LinearLayout.LayoutParams(-1, dp(8));
         progressBarParams.setMargins(0, dp(8), 0, 0);
         header.addView(progressBar, progressBarParams);
+
+        LinearLayout sectionNavigation = new LinearLayout(this);
+        sectionNavigation.setOrientation(LinearLayout.HORIZONTAL);
+        sectionNavigation.setGravity(Gravity.CENTER_VERTICAL);
+        sectionNavigation.setPadding(0, dp(10), 0, 0);
+        previousSectionButton = secondaryButton("‹");
+        previousSectionButton.setTextSize(24);
+        previousSectionButton.setContentDescription("Previous checklist section");
+        previousSectionButton.setOnClickListener(v -> moveChecklistSection(-1));
+        sectionNavigation.addView(previousSectionButton, new LinearLayout.LayoutParams(dp(48), dp(44)));
+
+        sectionNavigationLabel = text("", 14, TEXT, true);
+        sectionNavigationLabel.setGravity(Gravity.CENTER);
+        sectionNavigationLabel.setSingleLine(true);
+        sectionNavigationLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        sectionNavigationLabel.setClickable(true);
+        sectionNavigationLabel.setFocusable(true);
+        sectionNavigationLabel.setOnClickListener(v -> showSectionNavigationPicker(v));
+        LinearLayout.LayoutParams sectionLabelParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        sectionLabelParams.setMargins(dp(8), 0, dp(8), 0);
+        sectionNavigationLabel.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
+        sectionNavigation.addView(sectionNavigationLabel, sectionLabelParams);
+
+        nextSectionButton = secondaryButton("›");
+        nextSectionButton.setTextSize(24);
+        nextSectionButton.setContentDescription("Next checklist section");
+        nextSectionButton.setOnClickListener(v -> moveChecklistSection(1));
+        sectionNavigation.addView(nextSectionButton, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        header.addView(sectionNavigation, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setClipToPadding(false);
@@ -829,6 +881,43 @@ public class MainActivity extends Activity {
         menu.startAnimation(fadeIn);
     }
 
+    private void moveChecklistSection(int direction) {
+        int current = sectionNames.indexOf(openSection);
+        int target = current + direction;
+        if (target >= 0 && target < sectionNames.size()) {
+            setOpenSection(sectionNames.get(target));
+        }
+    }
+
+    private void showSectionNavigationPicker(View anchor) {
+        if (sectionNames.isEmpty()) return;
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(14), dp(12), dp(14), dp(4));
+        menu.setBackground(rounded(Color.rgb(18, 22, 32), dp(18), BORDER, 1));
+        TextView title = text("CHOOSE SECTION", 12, TESLA_RED, true);
+        title.setLetterSpacing(0.08f);
+        title.setPadding(dp(6), 0, dp(6), dp(8));
+        menu.addView(title);
+
+        final PopupWindow[] popup = new PopupWindow[1];
+        for (String section : sectionNames) {
+            String subtitle = sectionProgress(section);
+            addMenuItem(menu, section, subtitle, section.equals(openSection), () -> {
+                popup[0].dismiss();
+                setOpenSection(section);
+            });
+        }
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(menu);
+        int maxHeight = Math.min(dp(600), getResources().getDisplayMetrics().heightPixels - dp(170));
+        popup[0] = new PopupWindow(scroll, dp(320), maxHeight, true);
+        popup[0].setOutsideTouchable(true);
+        popup[0].setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        popup[0].setElevation(dp(10));
+        popup[0].showAsDropDown(anchor, -dp(110), dp(6));
+    }
+
     private void showOrderDetailsPage(boolean fromChecklist, String model) {
         showingOrderDetails = true;
         orderDetailsOpenedFromChecklist = fromChecklist;
@@ -836,13 +925,18 @@ public class MainActivity extends Activity {
         rows.clear();
         progress = null;
 
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(BG);
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(BG);
+        page.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(42), dp(20), dp(34));
+        root.setPadding(dp(20), dp(42), dp(20), dp(24));
         scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
 
         TextView eyebrow = text("DELIVERY INFORMATION", 12, TESLA_RED, true);
@@ -871,13 +965,19 @@ public class MainActivity extends Activity {
         intro.setPadding(0, 0, 0, dp(12));
         root.addView(intro);
 
+        addTeslaImportCard(root, model, fromChecklist);
+
+        OrderStageSection orderStage = addOrderStageCard(
+            root, "01", "ORDER", "Details that identify your Tesla order."
+        );
+        LinearLayout orderCard = orderStage.content;
         EditText orderNumber = addOrderField(
-            root, "Order number", "Example: RN123456789",
+            orderCard, "Order number", "Example: RN123456789",
             orderPrefs.getString("order_number", ""),
             android.text.InputType.TYPE_CLASS_TEXT
         );
         EditText vin = addOrderField(
-            root, "VIN", "17-character vehicle identification number",
+            orderCard, "VIN", "17-character vehicle identification number",
             orderPrefs.getString("order_vin", ""),
             android.text.InputType.TYPE_CLASS_TEXT
                 | android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
@@ -886,56 +986,155 @@ public class MainActivity extends Activity {
             new android.text.InputFilter.AllCaps(),
             new android.text.InputFilter.LengthFilter(17)
         });
-        TextView eddHeading = text("Estimated delivery window", 16, TESLA_RED, true);
-        eddHeading.setPadding(dp(2), dp(4), dp(2), dp(8));
-        root.addView(eddHeading);
-        EditText eddStart = addOrderField(
-            root, "EDD start date", "First estimated delivery date",
-            orderPrefs.getString("order_edd_start", ""),
-            android.text.InputType.TYPE_CLASS_TEXT
+        TextView vinHint = text(
+            "This VIN appears beside the collection-day VIN check.",
+            13, MUTED, false
+        );
+        orderCard.addView(vinHint);
+
+        addTimelineConnector(root);
+        OrderStageSection eddStage = addOrderStageCard(
+            root, "02", "ESTIMATED DELIVERY", "The delivery window shown in your Tesla account."
+        );
+        LinearLayout eddCard = eddStage.content;
+        LinearLayout eddDates = new LinearLayout(this);
+        eddDates.setOrientation(LinearLayout.HORIZONTAL);
+        eddCard.addView(eddDates, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout eddStartColumn = new LinearLayout(this);
+        eddStartColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout eddEndColumn = new LinearLayout(this);
+        eddEndColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams dateColumnParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        dateColumnParams.setMargins(0, 0, dp(5), 0);
+        eddDates.addView(eddStartColumn, dateColumnParams);
+        LinearLayout.LayoutParams endColumnParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        endColumnParams.setMargins(dp(5), 0, 0, 0);
+        eddDates.addView(eddEndColumn, endColumnParams);
+        EditText eddStart = addOrderSelectorField(
+            eddStartColumn, "FROM", "Choose date",
+            compactOrderDate(orderPrefs.getString("order_edd_start", "")),
+            "Choose estimated delivery start date"
         );
         makeDatePickerField(eddStart);
-        EditText eddEnd = addOrderField(
-            root, "EDD end date", "Last estimated delivery date",
-            orderPrefs.getString("order_edd_end", ""),
-            android.text.InputType.TYPE_CLASS_TEXT
+        EditText eddEnd = addOrderSelectorField(
+            eddEndColumn, "TO", "Choose date",
+            compactOrderDate(orderPrefs.getString("order_edd_end", "")),
+            "Choose estimated delivery end date"
         );
         makeDatePickerField(eddEnd);
-        TextView collectionHeading = text("Collection appointment", 16, TESLA_RED, true);
-        collectionHeading.setPadding(dp(2), dp(4), dp(2), dp(8));
-        root.addView(collectionHeading);
-        EditText collectionDate = addOrderField(
-            root, "Collection date", "Example: 14 August 2026",
-            orderPrefs.getString("order_collection_date", ""),
-            android.text.InputType.TYPE_CLASS_TEXT
+
+        addTimelineConnector(root);
+        OrderStageSection collectionStage = addOrderStageCard(
+            root, "03", "COLLECTION", "Add this once Tesla confirms your appointment."
+        );
+        LinearLayout collectionContent = collectionStage.content;
+        boolean hasCollection = !orderPrefs.getString("order_collection_date", "").trim().isEmpty()
+            || !orderPrefs.getString("order_collection_time", "").trim().isEmpty()
+            || !orderPrefs.getString("order_collection_location_id", "").trim().isEmpty();
+        LinearLayout collectionDateTime = new LinearLayout(this);
+        collectionDateTime.setOrientation(LinearLayout.HORIZONTAL);
+        collectionContent.addView(collectionDateTime, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout collectionDateColumn = new LinearLayout(this);
+        collectionDateColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout collectionTimeColumn = new LinearLayout(this);
+        collectionTimeColumn.setOrientation(LinearLayout.VERTICAL);
+        collectionDateTime.addView(collectionDateColumn, dateColumnParams);
+        collectionDateTime.addView(collectionTimeColumn, endColumnParams);
+        EditText collectionDate = addOrderSelectorField(
+            collectionDateColumn, "DATE", "Choose date",
+            compactOrderDate(orderPrefs.getString("order_collection_date", "")),
+            "Choose collection date"
         );
         makeDatePickerField(collectionDate);
-        EditText collectionTime = addOrderField(
-            root, "Collection time", "Example: 10:30",
+        EditText collectionTime = addOrderSelectorField(
+            collectionTimeColumn, "TIME", "Choose time",
             orderPrefs.getString("order_collection_time", ""),
-            android.text.InputType.TYPE_CLASS_DATETIME
-                | android.text.InputType.TYPE_DATETIME_VARIATION_TIME
+            "Choose collection time"
         );
         makeTimePickerField(collectionTime);
         CollectionLocationSelection collectionLocation =
-            addCollectionLocationSelector(root, orderPrefs);
+            addCollectionLocationSelector(collectionContent, orderPrefs);
 
-        TextView vinHint = text(
-            "The saved VIN appears with the collection-day VIN check.",
-            13, MUTED, false
-        );
-        vinHint.setPadding(dp(2), 0, dp(2), dp(8));
-        root.addView(vinHint);
+        OrderStageSection[] orderStages = {orderStage, eddStage, collectionStage};
+        Button continueToEdd = primaryButton("Continue to estimated delivery");
+        continueToEdd.setOnClickListener(v -> {
+            if (validOrderVin(vin)) setExpandedOrderStage(orderStages, 1);
+        });
+        LinearLayout.LayoutParams continueParams = new LinearLayout.LayoutParams(-1, dp(46));
+        continueParams.setMargins(0, dp(12), 0, 0);
+        orderCard.addView(continueToEdd, continueParams);
+
+        Button continueToCollection = primaryButton("Continue to collection");
+        continueToCollection.setOnClickListener(v -> {
+            if (eddStart.getText().toString().trim().isEmpty()) {
+                eddStart.setError("Choose the first estimated delivery date");
+                eddStart.requestFocus();
+                return;
+            }
+            if (eddEnd.getText().toString().trim().isEmpty()) {
+                eddEnd.setError("Choose the last estimated delivery date");
+                eddEnd.requestFocus();
+                return;
+            }
+            if (validDeliveryDates(eddStart, eddEnd)) setExpandedOrderStage(orderStages, 2);
+        });
+        LinearLayout.LayoutParams eddContinueParams = new LinearLayout.LayoutParams(-1, dp(46));
+        eddContinueParams.setMargins(0, dp(4), 0, 0);
+        eddCard.addView(continueToCollection, eddContinueParams);
+
+        int initialStage = hasCollection ? 2
+            : (!eddStart.getText().toString().isEmpty() || !eddEnd.getText().toString().isEmpty()) ? 1 : 0;
+        for (int stageIndex = 0; stageIndex < orderStages.length; stageIndex++) {
+            final int targetStage = stageIndex;
+            orderStages[stageIndex].card.setOnClickListener(v ->
+                setExpandedOrderStage(orderStages, targetStage)
+            );
+            orderStages[stageIndex].content.setOnClickListener(v -> { });
+        }
+        setExpandedOrderStage(orderStages, initialStage);
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.CENTER_VERTICAL);
         Button cancel = secondaryButton("Cancel");
-        Button save = primaryButton("Save Details");
-        buttons.addView(cancel, weightParams());
-        buttons.addView(save, weightParams());
-        LinearLayout.LayoutParams buttonRowParams = new LinearLayout.LayoutParams(-1, dp(48));
-        buttonRowParams.setMargins(0, dp(6), 0, 0);
+        Button save = primaryButton("Save changes");
+        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(104), dp(48));
+        cancelParams.setMargins(0, 0, dp(10), 0);
+        buttons.addView(cancel, cancelParams);
+        buttons.addView(save, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        LinearLayout.LayoutParams buttonRowParams = new LinearLayout.LayoutParams(-1, -2);
+        buttonRowParams.setMargins(0, dp(18), 0, 0);
         root.addView(buttons, buttonRowParams);
+
+        String[] initialValues = {
+            orderNumber.getText().toString(),
+            vin.getText().toString(),
+            eddStart.getText().toString(),
+            eddEnd.getText().toString(),
+            collectionDate.getText().toString(),
+            collectionTime.getText().toString(),
+            orderPrefs.getString("order_collection_location_id", "")
+        };
+        boolean[] dirty = { false };
+        Runnable refreshSaveState = () -> {
+            dirty[0] = orderFieldsChanged(
+                initialValues, orderNumber, vin, eddStart, eddEnd,
+                collectionDate, collectionTime, collectionLocation
+            );
+            save.setEnabled(dirty[0]);
+            save.setAlpha(dirty[0] ? 1f : 0.42f);
+            save.setText(dirty[0] ? "Save changes" : "Up to date");
+        };
+        watchOrderField(orderNumber, refreshSaveState);
+        watchOrderField(vin, refreshSaveState);
+        watchOrderField(eddStart, refreshSaveState);
+        watchOrderField(eddEnd, refreshSaveState);
+        watchOrderField(collectionDate, refreshSaveState);
+        watchOrderField(collectionTime, refreshSaveState);
+        collectionLocation.onChanged = refreshSaveState;
+        refreshSaveState.run();
+        Runnable attemptLeave = () -> confirmDiscardOrderChanges(dirty[0]);
+        orderDetailsBackAction = attemptLeave;
 
         Runnable archiveAction = () -> {
             if (!validOrderVin(vin)) return;
@@ -965,16 +1164,269 @@ public class MainActivity extends Activity {
             showOrderDetailsMenu(orderMenu, archiveAction, clearAction)
         );
 
-        cancel.setOnClickListener(v -> leaveOrderDetails());
+        cancel.setOnClickListener(v -> attemptLeave.run());
         save.setOnClickListener(v -> {
             if (!validOrderVin(vin)) return;
             if (!validDeliveryDates(eddStart, eddEnd)) return;
             saveOrderFields(orderPrefs, orderNumber, vin, eddStart, eddEnd, collectionDate, collectionTime, collectionLocation);
+            dirty[0] = false;
             Toast.makeText(this, "Order details saved", Toast.LENGTH_SHORT).show();
             leaveOrderDetails();
         });
 
-        setContentView(scroll);
+        setContentView(page);
+    }
+
+    private void addTeslaImportCard(LinearLayout root, String model, boolean fromChecklist) {
+        TeslaTokenStore tokenStore = new TeslaTokenStore(this);
+        boolean connected = tokenStore.isConnected();
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(rounded(SURFACE_2, dp(16), connected ? TESLA_RED : BORDER, 1));
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        card.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView status = text(connected ? "TESLA CONNECTED" : "IMPORT FROM TESLA", 12, connected ? TESLA_RED : TEXT, true);
+        status.setLetterSpacing(0.08f);
+        heading.addView(status, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView readOnly = text("READ ONLY", 10, MUTED, true);
+        readOnly.setLetterSpacing(0.08f);
+        heading.addView(readOnly);
+
+        TextView explanation = text(
+            connected
+                ? "Refresh your active order to fill RN, VIN, delivery window and collection day."
+                : "Personal connection using Tesla sign-in. Your password is never stored by TSURE.",
+            13, MUTED, false
+        );
+        explanation.setPadding(0, dp(6), 0, dp(12));
+        card.addView(explanation);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button connect = primaryButton(connected ? "Refresh order" : "Connect Tesla");
+        actions.addView(connect, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        if (connected) {
+            Button disconnect = secondaryButton("Disconnect");
+            LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(dp(112), dp(44));
+            disconnectParams.setMargins(dp(8), 0, 0, 0);
+            actions.addView(disconnect, disconnectParams);
+            disconnect.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Disconnect Tesla?")
+                .setMessage("This removes the encrypted Tesla tokens from this device. Imported order details stay in TSURE.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Disconnect", (dialog, which) -> {
+                    new TeslaOrderClient(this).disconnect();
+                    Toast.makeText(this, "Tesla disconnected", Toast.LENGTH_SHORT).show();
+                    showOrderDetailsPage(fromChecklist, model);
+                })
+                .show());
+        }
+        card.addView(actions);
+        connect.setOnClickListener(v -> {
+            pendingTeslaModel = model;
+            pendingTeslaFromChecklist = fromChecklist;
+            if (new TeslaTokenStore(this).isConnected()) {
+                fetchTeslaOrdersForImport(model, fromChecklist);
+            } else {
+                startActivityForResult(new Intent(this, TeslaAuthActivity.class), REQUEST_TESLA_AUTH);
+            }
+        });
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(14));
+        root.addView(card, params);
+    }
+
+    private void fetchTeslaOrdersForImport(String model, boolean fromChecklist) {
+        final AlertDialog progressDialog = new AlertDialog.Builder(this)
+            .setTitle("Checking Tesla")
+            .setMessage("Retrieving your active orders…")
+            .setCancelable(false)
+            .create();
+        progressDialog.show();
+        new TeslaOrderClient(this).fetch(new TeslaOrderClient.Callback() {
+            @Override public void onSuccess(List<TeslaOrderClient.TeslaOrder> orders) {
+                progressDialog.dismiss();
+                if (orders.isEmpty()) {
+                    new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("No active orders found")
+                        .setMessage("Tesla did not return an active vehicle order for this account. You can keep entering details manually.")
+                        .setPositiveButton("OK", null)
+                        .show();
+                    return;
+                }
+                if (orders.size() == 1) {
+                    showTeslaImportPreview(orders.get(0), model, fromChecklist);
+                    return;
+                }
+                String[] labels = new String[orders.size()];
+                for (int index = 0; index < orders.size(); index++) labels[index] = orders.get(index).title();
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("Choose your order")
+                    .setItems(labels, (dialog, which) ->
+                        showTeslaImportPreview(orders.get(which), model, fromChecklist)
+                    )
+                    .setNegativeButton("Cancel", null)
+                    .show();
+            }
+
+            @Override public void onError(String message) {
+                progressDialog.dismiss();
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("Tesla import unavailable")
+                    .setMessage(message + "\n\nThis is a private, unofficial connection and Tesla may change it without notice.")
+                    .setNegativeButton("Keep connected", null)
+                    .setPositiveButton("Disconnect", (dialog, which) -> {
+                        new TeslaOrderClient(MainActivity.this).disconnect();
+                        showOrderDetailsPage(fromChecklist, model);
+                    })
+                    .show();
+            }
+        });
+    }
+
+    private void showTeslaImportPreview(
+        TeslaOrderClient.TeslaOrder order,
+        String model,
+        boolean fromChecklist
+    ) {
+        LinearLayout preview = new LinearLayout(this);
+        preview.setOrientation(LinearLayout.VERTICAL);
+        preview.setPadding(dp(20), dp(4), dp(20), 0);
+        TextView eyebrow = text("TESLA ORDER FOUND", 11, TESLA_RED, true);
+        eyebrow.setLetterSpacing(0.1f);
+        preview.addView(eyebrow);
+        TextView heading = text("Import delivery details?", 22, TEXT, true);
+        heading.setPadding(0, dp(5), 0, dp(4));
+        preview.addView(heading);
+        TextView guidance = text(
+            "Review the fields Tesla returned. Only these values will be updated.",
+            13, MUTED, false
+        );
+        guidance.setPadding(0, 0, 0, dp(14));
+        preview.addView(guidance);
+
+        LinearLayout data = new LinearLayout(this);
+        data.setOrientation(LinearLayout.VERTICAL);
+        data.setPadding(dp(14), dp(4), dp(14), dp(4));
+        data.setBackground(rounded(SURFACE_2, dp(14), BORDER, 1));
+        boolean hasData = false;
+        hasData |= addTeslaPreviewRow(data, "RN", order.referenceNumber);
+        hasData |= addTeslaPreviewRow(data, "VIN", order.vin);
+        hasData |= addTeslaPreviewRow(data, "EDD", dateRange(order.eddStart, order.eddEnd));
+        hasData |= addTeslaPreviewRow(data, "COLLECTION", collectionSummary(order));
+        TeslaCollectionLocation matchedCentre = matchImportedCollectionCentre(order);
+        hasData |= addTeslaPreviewRow(
+            data,
+            "CENTRE",
+            matchedCentre == null ? order.collectionCentre : matchedCentre.getLocationName()
+        );
+        if (!hasData) {
+            TextView empty = text(
+                "Tesla returned the order, but no supported delivery fields were present.",
+                13, MUTED, false
+            );
+            empty.setPadding(0, dp(10), 0, dp(10));
+            data.addView(empty);
+        }
+        preview.addView(data, new LinearLayout.LayoutParams(-1, -2));
+
+        new AlertDialog.Builder(this)
+            .setView(preview)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Import details", (dialog, which) -> {
+                android.content.SharedPreferences orderPrefs = modelPreferences(model);
+                android.content.SharedPreferences.Editor editor = orderPrefs.edit();
+                if (!order.referenceNumber.isEmpty()) editor.putString("order_number", order.referenceNumber);
+                if (!order.vin.isEmpty()) editor.putString("order_vin", order.vin);
+                if (!order.eddStart.isEmpty()) editor.putString("order_edd_start", order.eddStart);
+                if (!order.eddEnd.isEmpty()) editor.putString("order_edd_end", order.eddEnd);
+                if (!order.collectionDate.isEmpty()) editor.putString("order_collection_date", order.collectionDate);
+                if (!order.collectionTime.isEmpty()) editor.putString("order_collection_time", order.collectionTime);
+                if (matchedCentre != null) {
+                    editor.putString("order_collection_location_id", matchedCentre.getId());
+                    editor.remove("order_collection_location");
+                } else if (!order.collectionCentre.isEmpty()) {
+                    editor.remove("order_collection_location_id");
+                    editor.putString("order_collection_location", order.collectionCentre);
+                }
+                editor.apply();
+                showingOrderDetails = false;
+                orderDetailsBackAction = null;
+                pendingTeslaModel = null;
+                showLandingPage();
+                Toast.makeText(this, "Tesla order imported", Toast.LENGTH_SHORT).show();
+            })
+            .show();
+    }
+
+    private boolean addTeslaPreviewRow(LinearLayout root, String label, String value) {
+        if (value == null || value.trim().isEmpty()) return false;
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(10), 0, dp(10));
+        TextView labelView = text(label, 10, MUTED, true);
+        labelView.setLetterSpacing(0.08f);
+        row.addView(labelView, new LinearLayout.LayoutParams(dp(86), -2));
+        TextView valueView = text(value.trim(), 14, TEXT, true);
+        valueView.setGravity(Gravity.END);
+        row.addView(valueView, new LinearLayout.LayoutParams(0, -2, 1f));
+        root.addView(row);
+        return true;
+    }
+
+    private String dateRange(String start, String end) {
+        if (start.isEmpty()) return end;
+        if (end.isEmpty()) return start;
+        return start + " – " + end;
+    }
+
+    private String collectionSummary(TeslaOrderClient.TeslaOrder order) {
+        if (!order.collectionDate.isEmpty()) {
+            return order.collectionDate + (order.collectionTime.isEmpty() ? "" : " at " + order.collectionTime);
+        }
+        return order.collectionSummary;
+    }
+
+    private TeslaCollectionLocation matchImportedCollectionCentre(TeslaOrderClient.TeslaOrder order) {
+        String imported = normalizeCollectionCentre(order.collectionCentre);
+        if (imported.isEmpty()) return null;
+        TeslaCollectionLocation best = null;
+        int bestScore = 0;
+        for (TeslaCollectionLocation location : locationRepository.getAllLocationsNow()) {
+            if (!order.countryCode.isEmpty()
+                && !order.countryCode.equalsIgnoreCase(location.getCountryCode())) continue;
+            String city = normalizeCollectionCentre(location.getCity());
+            String name = normalizeCollectionCentre(location.getLocationName());
+            String postcode = normalizeCollectionCentre(location.getPostcode());
+            int score = 0;
+            if (!city.isEmpty() && imported.contains(city)) score += 10;
+            if (!postcode.isEmpty() && imported.contains(postcode)) score += 12;
+            for (String word : name.split(" ")) {
+                if (word.length() >= 4 && imported.contains(word)) score++;
+            }
+            if (score > bestScore) {
+                best = location;
+                bestScore = score;
+            }
+        }
+        return bestScore >= 10 ? best : null;
+    }
+
+    private String normalizeCollectionCentre(String value) {
+        if (value == null) return "";
+        return value.toLowerCase(Locale.UK)
+            .replace("&", " ")
+            .replaceAll("[^a-z0-9]+", " ")
+            .replaceAll("\\b(tesla|delivery|collection|certified|pre|owned|service|centre|center)\\b", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
     }
 
     private void showOrderDetailsMenu(
@@ -1032,11 +1484,16 @@ public class MainActivity extends Activity {
         CollectionLocationSelection selection = new CollectionLocationSelection();
         selection.selectedId = orderPrefs.getString("order_collection_location_id", "");
 
-        TextView label = text("Collection location", 14, TEXT, true);
-        label.setPadding(dp(2), 0, dp(2), dp(6));
+        TextView label = text("LOCATION", 11, MUTED, true);
+        label.setLetterSpacing(0.08f);
+        label.setPadding(dp(2), dp(2), dp(2), dp(6));
         root.addView(label);
 
-        selection.selector = secondaryButton("Choose collection location");
+        selection.selector = baseButton("Choose collection location");
+        selection.selector.setTextColor(TEXT);
+        selection.selector.setTextSize(15);
+        selection.selector.setAllCaps(false);
+        selection.selector.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
         selection.selector.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         selection.selector.setPadding(dp(14), 0, dp(14), 0);
         LinearLayout.LayoutParams selectorParams = new LinearLayout.LayoutParams(-1, dp(52));
@@ -1173,6 +1630,7 @@ public class MainActivity extends Activity {
                 item.setOnClickListener(v -> {
                     selection.selectedId = location.getId();
                     updateCollectionLocationSelection(selection);
+                    if (selection.onChanged != null) selection.onChanged.run();
                     dialog.dismiss();
                 });
                 LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
@@ -1191,6 +1649,7 @@ public class MainActivity extends Activity {
         custom.setOnClickListener(v -> {
             selection.selectedId = "custom";
             updateCollectionLocationSelection(selection);
+            if (selection.onChanged != null) selection.onChanged.run();
             dialog.dismiss();
         });
         LinearLayout.LayoutParams customParams = new LinearLayout.LayoutParams(-1, dp(50));
@@ -1265,13 +1724,23 @@ public class MainActivity extends Activity {
 
     private Date parseOrderDate(String value) {
         if (value == null || value.trim().isEmpty()) return null;
-        SimpleDateFormat format = new SimpleDateFormat("dd MMMM yyyy", Locale.UK);
-        format.setLenient(false);
-        try {
-            return format.parse(value.trim());
-        } catch (Exception ignored) {
-            return null;
+        String dateText = value.trim();
+        for (String pattern : new String[] {"dd MMM yyyy", "dd MMMM yyyy"}) {
+            SimpleDateFormat format = new SimpleDateFormat(pattern, Locale.UK);
+            format.setLenient(false);
+            try {
+                return format.parse(dateText);
+            } catch (Exception ignored) { }
         }
+        return null;
+    }
+
+    private String compactOrderDate(String value) {
+        Date parsed = parseOrderDate(value);
+        if (parsed == null) return value == null ? "" : value.trim();
+        return new SimpleDateFormat("dd MMM yyyy", Locale.UK)
+            .format(parsed)
+            .toUpperCase(Locale.UK);
     }
 
     private long daysFromToday(Date target) {
@@ -1307,6 +1776,108 @@ public class MainActivity extends Activity {
                 + " day" + (daysToEnd == 1 ? "" : "s") + " remaining";
         }
         return "Estimated delivery window has passed";
+    }
+
+    private Date collectionDateTime(android.content.SharedPreferences orderPrefs) {
+        String date = orderPrefs.getString("order_collection_date", "").trim();
+        if (date.isEmpty()) return null;
+        Date parsedDate = parseOrderDate(date);
+        if (parsedDate == null) return null;
+        String time = orderPrefs.getString("order_collection_time", "").trim();
+        Calendar collection = Calendar.getInstance();
+        collection.setTime(parsedDate);
+        collection.set(Calendar.HOUR_OF_DAY, 0);
+        collection.set(Calendar.MINUTE, 0);
+        collection.set(Calendar.SECOND, 0);
+        collection.set(Calendar.MILLISECOND, 0);
+        if (time.isEmpty()) return collection.getTime();
+        SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.UK);
+        timeFormat.setLenient(false);
+        try {
+            Date parsedTime = timeFormat.parse(time);
+            Calendar clock = Calendar.getInstance();
+            clock.setTime(parsedTime);
+            collection.set(Calendar.HOUR_OF_DAY, clock.get(Calendar.HOUR_OF_DAY));
+            collection.set(Calendar.MINUTE, clock.get(Calendar.MINUTE));
+            return collection.getTime();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void showCollectionCountdown(android.content.SharedPreferences orderPrefs) {
+        Date collection = collectionDateTime(orderPrefs);
+        if (collection == null) return;
+        boolean hasTime = !orderPrefs.getString("order_collection_time", "").trim().isEmpty();
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(22), dp(20), dp(22), dp(8));
+        content.setBackground(rounded(SURFACE, dp(18), BORDER, 1));
+
+        TextView eyebrow = text("COLLECTION COUNTDOWN", 12, TESLA_RED, true);
+        eyebrow.setLetterSpacing(0.1f);
+        eyebrow.setGravity(Gravity.CENTER);
+        content.addView(eyebrow);
+
+        TextView heading = text("Your Tesla Awaits", 23, TEXT, true);
+        heading.setGravity(Gravity.CENTER);
+        heading.setPadding(0, dp(6), 0, dp(14));
+        content.addView(heading);
+
+        TextView timer = text("", 28, TEXT, true);
+        timer.setGravity(Gravity.CENTER);
+        timer.setPadding(dp(12), dp(18), dp(12), dp(18));
+        timer.setBackground(rounded(SURFACE_2, dp(14), TESLA_RED, 1));
+        LinearLayout.LayoutParams timerParams = new LinearLayout.LayoutParams(-1, -2);
+        timerParams.setMargins(0, 0, 0, dp(14));
+        content.addView(timer, timerParams);
+        TextView dateLabel = text(
+            "Collection: " + orderPrefs.getString("order_collection_date", "")
+                + (hasTime ? " at " + orderPrefs.getString("order_collection_time", "") : ""),
+            15, MUTED, false
+        );
+        dateLabel.setGravity(Gravity.CENTER);
+        dateLabel.setPadding(0, 0, 0, dp(8));
+        content.addView(dateLabel);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setView(content)
+            .setPositiveButton("Close", null)
+            .create();
+        Handler handler = new Handler(Looper.getMainLooper());
+        Runnable updater = new Runnable() {
+            @Override public void run() {
+                long remaining = collection.getTime() - System.currentTimeMillis();
+                if (!hasTime && daysFromToday(collection) == 0) {
+                    timer.setText("Collection day is today");
+                } else if (remaining <= 0) {
+                    timer.setText(hasTime ? "Collection time has arrived" : "Collection day has passed");
+                } else {
+                    long totalSeconds = remaining / 1000;
+                    long days = totalSeconds / 86400;
+                    long hours = (totalSeconds % 86400) / 3600;
+                    long minutes = (totalSeconds % 3600) / 60;
+                    long seconds = totalSeconds % 60;
+                    timer.setText(String.format(
+                        Locale.UK, "%d days  %02d:%02d:%02d", days, hours, minutes, seconds
+                    ));
+                    handler.postDelayed(this, 1000);
+                }
+            }
+        };
+        dialog.setOnShowListener(ignored -> {
+            Button close = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            close.setTextColor(TESLA_RED);
+            close.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            Window window = dialog.getWindow();
+            if (window != null) {
+                window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            }
+            updater.run();
+        });
+        dialog.setOnDismissListener(ignored -> handler.removeCallbacks(updater));
+        dialog.show();
     }
 
     private void saveOrderFields(
@@ -1359,6 +1930,160 @@ public class MainActivity extends Activity {
             .apply();
     }
 
+    private boolean orderFieldsChanged(
+        String[] initialValues,
+        EditText orderNumber,
+        EditText vin,
+        EditText eddStart,
+        EditText eddEnd,
+        EditText collectionDate,
+        EditText collectionTime,
+        CollectionLocationSelection collectionLocation
+    ) {
+        String[] currentValues = {
+            orderNumber.getText().toString().trim(),
+            vin.getText().toString().trim(),
+            eddStart.getText().toString().trim(),
+            eddEnd.getText().toString().trim(),
+            collectionDate.getText().toString().trim(),
+            collectionTime.getText().toString().trim(),
+            collectionLocation.selectedId == null ? "" : collectionLocation.selectedId
+        };
+        for (int i = 0; i < initialValues.length; i++) {
+            String initial = initialValues[i] == null ? "" : initialValues[i].trim();
+            if (!initial.equals(currentValues[i])) return true;
+        }
+        return false;
+    }
+
+    private void watchOrderField(EditText field, Runnable onChanged) {
+        field.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                onChanged.run();
+            }
+            @Override public void afterTextChanged(android.text.Editable s) { }
+        });
+    }
+
+    private void confirmDiscardOrderChanges(boolean hasChanges) {
+        if (!hasChanges) {
+            leaveOrderDetails();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Discard unsaved changes?")
+            .setMessage("Your edits to these order details have not been saved.")
+            .setNegativeButton("Keep editing", null)
+            .setPositiveButton("Discard", (dialog, which) -> leaveOrderDetails())
+            .show();
+    }
+
+    private OrderStageSection addOrderStageCard(
+        LinearLayout root,
+        String number,
+        String title,
+        String subtitle
+    ) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(16), dp(16), dp(16));
+        card.setBackground(rounded(SURFACE, dp(18), BORDER, 1));
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        card.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView marker = text(number, 12, TEXT, true);
+        marker.setGravity(Gravity.CENTER);
+        marker.setBackground(rounded(TESLA_RED, dp(18), TESLA_RED, 0));
+        heading.addView(marker, new LinearLayout.LayoutParams(dp(36), dp(36)));
+
+        LinearLayout headingText = new LinearLayout(this);
+        headingText.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams headingTextParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        headingTextParams.setMargins(dp(12), 0, 0, 0);
+        heading.addView(headingText, headingTextParams);
+
+        TextView titleView = text(title, 14, TEXT, true);
+        titleView.setLetterSpacing(0.08f);
+        headingText.addView(titleView);
+        TextView subtitleView = text(subtitle, 13, MUTED, false);
+        subtitleView.setPadding(0, dp(2), 0, 0);
+        headingText.addView(subtitleView);
+
+        TextView disclosure = text("⌄", 22, MUTED, true);
+        disclosure.setGravity(Gravity.CENTER);
+        disclosure.setContentDescription("Expand " + title.toLowerCase(Locale.UK));
+        heading.addView(disclosure, new LinearLayout.LayoutParams(dp(32), dp(40)));
+
+        Space space = new Space(this);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(space, new LinearLayout.LayoutParams(1, dp(14)));
+        card.addView(content, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.setMargins(0, 0, 0, 0);
+        root.addView(card, cardParams);
+        OrderStageSection section = new OrderStageSection();
+        section.card = card;
+        section.content = content;
+        section.disclosure = disclosure;
+        return section;
+    }
+
+    private void setExpandedOrderStage(OrderStageSection[] stages, int expandedIndex) {
+        for (int index = 0; index < stages.length; index++) {
+            boolean expanded = index == expandedIndex;
+            stages[index].content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            stages[index].disclosure.setText(expanded ? "⌃" : "⌄");
+            stages[index].disclosure.setTextColor(expanded ? TESLA_RED : MUTED);
+            stages[index].card.setBackground(
+                rounded(SURFACE, dp(18), expanded ? TESLA_RED : BORDER, 1)
+            );
+        }
+    }
+
+    private void addTimelineConnector(LinearLayout root) {
+        LinearLayout connectorRow = new LinearLayout(this);
+        connectorRow.setGravity(Gravity.CENTER_HORIZONTAL);
+        View connector = new View(this);
+        connector.setBackgroundColor(TESLA_RED);
+        connectorRow.addView(connector, new LinearLayout.LayoutParams(dp(2), dp(22)));
+        root.addView(connectorRow, new LinearLayout.LayoutParams(-1, dp(22)));
+    }
+
+    private EditText addOrderSelectorField(
+        LinearLayout root,
+        String label,
+        String hint,
+        String value,
+        String contentDescription
+    ) {
+        TextView fieldLabel = text(label, 11, MUTED, true);
+        fieldLabel.setLetterSpacing(0.08f);
+        fieldLabel.setPadding(dp(2), 0, dp(2), dp(6));
+        root.addView(fieldLabel);
+
+        EditText input = new EditText(this);
+        input.setText(value);
+        input.setHint(hint);
+        input.setContentDescription(contentDescription);
+        input.setTextColor(TEXT);
+        input.setHintTextColor(MUTED);
+        input.setTextSize(14);
+        input.setSingleLine(true);
+        input.setGravity(Gravity.CENTER_VERTICAL);
+        input.setPadding(dp(12), 0, dp(10), 0);
+        input.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
+        params.setMargins(0, 0, 0, dp(12));
+        root.addView(input, params);
+        return input;
+    }
+
     private EditText addOrderField(
         LinearLayout root,
         String label,
@@ -1392,18 +2117,18 @@ public class MainActivity extends Activity {
         input.setOnClickListener(v -> {
             Calendar selected = Calendar.getInstance();
             String current = input.getText().toString().trim();
-            if (!current.isEmpty()) {
-                try {
-                    Date parsed = new SimpleDateFormat("dd MMMM yyyy", Locale.UK).parse(current);
-                    if (parsed != null) selected.setTime(parsed);
-                } catch (Exception ignored) { }
-            }
+            Date parsed = parseOrderDate(current);
+            if (parsed != null) selected.setTime(parsed);
             DatePickerDialog picker = new DatePickerDialog(
                 this,
                 (view, year, month, day) -> {
                     Calendar value = Calendar.getInstance();
                     value.set(year, month, day);
-                    input.setText(new SimpleDateFormat("dd MMMM yyyy", Locale.UK).format(value.getTime()));
+                    input.setText(
+                        new SimpleDateFormat("dd MMM yyyy", Locale.UK)
+                            .format(value.getTime())
+                            .toUpperCase(Locale.UK)
+                    );
                 },
                 selected.get(Calendar.YEAR),
                 selected.get(Calendar.MONTH),
@@ -1439,6 +2164,7 @@ public class MainActivity extends Activity {
     private void leaveOrderDetails() {
         boolean returnToChecklist = orderDetailsOpenedFromChecklist;
         showingOrderDetails = false;
+        orderDetailsBackAction = null;
         if (returnToChecklist) showChecklistPage();
         else showLandingPage();
     }
@@ -1732,7 +2458,7 @@ public class MainActivity extends Activity {
         customContent.addView(addCustomCheck, addParams);
 
         setupSectionDropdown();
-        setOpenSection(sectionNames.isEmpty() ? null : sectionNames.get(0));
+        setOpenSection(firstIncompleteSection());
     }
 
     private void setupSectionDropdown() {
@@ -1893,18 +2619,24 @@ public class MainActivity extends Activity {
 
         RadioGroup rg = new RadioGroup(this);
         rg.setOrientation(RadioGroup.HORIZONTAL);
-        rg.setPadding(0, dp(6), 0, 0);
+        rg.setPadding(0, dp(12), 0, 0);
         String[] labels = {"Pass", "Issue", "N/A"};
         for (int j=0; j<labels.length; j++) {
             RadioButton rb = new RadioButton(this);
             rb.setText(labels[j]);
-            rb.setTextColor(MUTED);
-            rb.setTextSize(14);
+            rb.setButtonDrawable(null);
+            rb.setGravity(Gravity.CENTER);
+            rb.setTextSize(13);
+            rb.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             rb.setId(1000 + index * 10 + j);
-            rg.addView(rb);
+            rb.setContentDescription(labels[j] + ": " + item.text);
+            LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+            if (j > 0) statusParams.setMargins(dp(6), 0, 0, 0);
+            rg.addView(rb, statusParams);
         }
         int savedStatus = prefs.getInt("status_" + index, -1);
         if (savedStatus >= 0) rg.check(1000 + index * 10 + savedStatus);
+        styleChecklistStatusButtons(rg, savedStatus);
         card.addView(rg);
 
         EditText notes = new EditText(this);
@@ -1923,8 +2655,10 @@ public class MainActivity extends Activity {
         rg.setOnCheckedChangeListener((group, checkedId) -> {
             int status = checkedId - (1000 + index * 10);
             prefs.edit().putInt("status_" + index, status).apply();
+            styleChecklistStatusButtons(rg, status);
             editIssue.setVisibility(status == 1 ? View.VISIBLE : View.GONE);
             updateProgress();
+            updateChecklistSectionNavigation();
             refreshSectionDropdown();
             if (status == 1) {
                 showIssueNoteDialog(index, item, notes);
@@ -1941,6 +2675,33 @@ public class MainActivity extends Activity {
             card.addView(remove, removeParams);
         }
         rows.add(new ItemRow(index, item, rg, notes));
+    }
+
+    private void styleChecklistStatusButtons(RadioGroup group, int selectedStatus) {
+        int passGreen = Color.rgb(51, 132, 83);
+        int issueRed = TESLA_RED;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            RadioButton button = (RadioButton) group.getChildAt(i);
+            boolean selected = i == selectedStatus;
+            int fill = SURFACE_2;
+            int border = BORDER;
+            int textColor = MUTED;
+            if (selected && i == 0) {
+                fill = Color.rgb(29, 72, 47);
+                border = passGreen;
+                textColor = Color.rgb(151, 240, 180);
+            } else if (selected && i == 1) {
+                fill = Color.rgb(73, 28, 37);
+                border = issueRed;
+                textColor = Color.WHITE;
+            } else if (selected) {
+                fill = Color.rgb(58, 64, 78);
+                border = Color.rgb(130, 140, 158);
+                textColor = TEXT;
+            }
+            button.setTextColor(textColor);
+            button.setBackground(rounded(fill, dp(11), border, selected ? 2 : 1));
+        }
     }
 
     private void addExpectedVin(LinearLayout card) {
@@ -1982,8 +2743,29 @@ public class MainActivity extends Activity {
                 updatingSectionSpinner = false;
             }
         }
+        updateChecklistSectionNavigation();
         updateProgress();
         refreshSectionDropdown();
+    }
+
+    private void updateChecklistSectionNavigation() {
+        if (sectionNavigationLabel == null || openSection == null) return;
+        int position = sectionNames.indexOf(openSection);
+        int issues = sectionIssueCount(openSection);
+        String label = openSection + "  ·  " + (position + 1) + "/" + sectionNames.size();
+        if (issues > 0) label += "  ·  " + issues + (issues == 1 ? " issue" : " issues");
+        sectionNavigationLabel.setText(label);
+        sectionNavigationLabel.setContentDescription(
+            openSection + ", section " + (position + 1) + " of " + sectionNames.size()
+        );
+        if (previousSectionButton != null) {
+            previousSectionButton.setEnabled(position > 0);
+            previousSectionButton.setAlpha(position > 0 ? 1f : 0.35f);
+        }
+        if (nextSectionButton != null) {
+            nextSectionButton.setEnabled(position >= 0 && position < sectionNames.size() - 1);
+            nextSectionButton.setAlpha(position >= 0 && position < sectionNames.size() - 1 ? 1f : 0.35f);
+        }
     }
 
     private int sectionIssueCount(String section) {
@@ -2222,6 +3004,12 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_TESLA_AUTH) {
+            if (resultCode == RESULT_OK && pendingTeslaModel != null) {
+                fetchTeslaOrdersForImport(pendingTeslaModel, pendingTeslaFromChecklist);
+            }
+            return;
+        }
         if (resultCode != RESULT_OK || pendingIssuePhotoIndex < 0) return;
 
         Uri uri = null;
@@ -2263,7 +3051,6 @@ public class MainActivity extends Activity {
         if (progressBar != null) progressBar.setProgress(done);
         if (progress != null) {
             String overall = done + " / " + activeChecks.size() + " checks complete" + (issues > 0 ? " • " + issues + " issue(s)" : "");
-            if (openSection != null) overall += "\n" + openSection + ": " + sectionProgress(openSection);
             progress.setText(overall);
         }
     }
@@ -2332,7 +3119,7 @@ public class MainActivity extends Activity {
         String report = buildReport();
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("text/plain");
-        send.putExtra(Intent.EXTRA_SUBJECT, "TesSure Delivery Checklist Report");
+        send.putExtra(Intent.EXTRA_SUBJECT, "TSURE Delivery Checklist Report");
         send.putExtra(Intent.EXTRA_TEXT, report);
         startActivity(Intent.createChooser(send, "Share checklist report"));
     }
@@ -2671,7 +3458,8 @@ public class MainActivity extends Activity {
 
     private void handleBackNavigation() {
         if (showingOrderDetails) {
-            leaveOrderDetails();
+            if (orderDetailsBackAction != null) orderDetailsBackAction.run();
+            else leaveOrderDetails();
             return;
         }
         if (showingArchives) {

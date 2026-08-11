@@ -12,6 +12,11 @@ def tesSureVersionCode =
     (tesSureVersionParts[0] * 10000) +
     (tesSureVersionParts[1] * 100) +
     tesSureVersionParts[2]
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
 
 android {
     namespace 'uk.co.pactsolutions.teslachecklist'
@@ -29,15 +34,30 @@ android {
         versionName tesSureVersion
     }
 
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties.getProperty('keyAlias', 'tessure')
+                keyPassword keystoreProperties.getProperty(
+                    'keyPassword',
+                    keystoreProperties['storePassword']
+                )
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
+            signingConfig signingConfigs.release
         }
     }
 
     applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "TesSure-${variant.name}-${variant.versionName}.apk"
+            outputFileName = "TSURE-${variant.name}-${variant.versionName}.apk"
         }
     }
 }

@@ -1,6 +1,6 @@
-# TesSure
+# TSURE
 
-TesSure is a simple Android checklist for inspecting a Tesla on collection day.
+TSURE is a simple Android checklist for inspecting a Tesla on collection day.
 
 ## App preview
 

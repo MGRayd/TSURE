@@ -7,6 +7,19 @@
         <item name="android:navigationBarColor">#0A0C12</item>
         <item name="android:statusBarColor">#0E1119</item>
         <item name="android:colorAccent">#DC1C2E</item>
+        <item name="android:alertDialogTheme">@style/TsureDialogTheme</item>
+    </style>
+
+    <style name="TsureDialogTheme" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@drawable/dialog_background</item>
+        <item name="android:windowNoTitle">false</item>
+        <item name="android:colorAccent">#DC1C2E</item>
+        <item name="android:textColorPrimary">#F5F7FA</item>
+        <item name="android:textColorSecondary">#AEB5C2</item>
+        <item name="android:navigationBarColor">#0A0C12</item>
+        <item name="android:windowMinWidthMajor">88%</item>
+        <item name="android:windowMinWidthMinor">88%</item>
     </style>
 
     <style name="ChecklistPopupAnimation">
