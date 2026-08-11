@@ -33,6 +33,9 @@ public class MainActivity extends Activity {
     private ProgressBar progressBar;
     private Spinner sectionSpinner;
     private ArrayAdapter<String> sectionAdapter;
+    private Button previousSectionButton;
+    private Button nextSectionButton;
+    private TextView sectionNavigationLabel;
     private boolean updatingSectionSpinner = false;
     private final ArrayList<ItemRow> rows = new ArrayList<>();
     private final ArrayList<CheckItem> activeChecks = new ArrayList<>();
@@ -677,6 +680,9 @@ public class MainActivity extends Activity {
         showingArchives = false;
         sectionSpinner = null;
         sectionAdapter = null;
+        previousSectionButton = null;
+        nextSectionButton = null;
+        sectionNavigationLabel = null;
         reloadActiveChecks();
 
         LinearLayout root = new LinearLayout(this);
@@ -722,6 +728,35 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams progressBarParams = new LinearLayout.LayoutParams(-1, dp(8));
         progressBarParams.setMargins(0, dp(8), 0, 0);
         header.addView(progressBar, progressBarParams);
+
+        LinearLayout sectionNavigation = new LinearLayout(this);
+        sectionNavigation.setOrientation(LinearLayout.HORIZONTAL);
+        sectionNavigation.setGravity(Gravity.CENTER_VERTICAL);
+        sectionNavigation.setPadding(0, dp(10), 0, 0);
+        previousSectionButton = secondaryButton("‹");
+        previousSectionButton.setTextSize(24);
+        previousSectionButton.setContentDescription("Previous checklist section");
+        previousSectionButton.setOnClickListener(v -> moveChecklistSection(-1));
+        sectionNavigation.addView(previousSectionButton, new LinearLayout.LayoutParams(dp(48), dp(44)));
+
+        sectionNavigationLabel = text("", 14, TEXT, true);
+        sectionNavigationLabel.setGravity(Gravity.CENTER);
+        sectionNavigationLabel.setSingleLine(true);
+        sectionNavigationLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        sectionNavigationLabel.setClickable(true);
+        sectionNavigationLabel.setFocusable(true);
+        sectionNavigationLabel.setOnClickListener(v -> showSectionNavigationPicker(v));
+        LinearLayout.LayoutParams sectionLabelParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        sectionLabelParams.setMargins(dp(8), 0, dp(8), 0);
+        sectionNavigationLabel.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
+        sectionNavigation.addView(sectionNavigationLabel, sectionLabelParams);
+
+        nextSectionButton = secondaryButton("›");
+        nextSectionButton.setTextSize(24);
+        nextSectionButton.setContentDescription("Next checklist section");
+        nextSectionButton.setOnClickListener(v -> moveChecklistSection(1));
+        sectionNavigation.addView(nextSectionButton, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        header.addView(sectionNavigation, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setClipToPadding(false);
@@ -835,6 +870,43 @@ public class MainActivity extends Activity {
         fadeIn.setDuration(160);
         popup.update(dp(292), maxHeight);
         menu.startAnimation(fadeIn);
+    }
+
+    private void moveChecklistSection(int direction) {
+        int current = sectionNames.indexOf(openSection);
+        int target = current + direction;
+        if (target >= 0 && target < sectionNames.size()) {
+            setOpenSection(sectionNames.get(target));
+        }
+    }
+
+    private void showSectionNavigationPicker(View anchor) {
+        if (sectionNames.isEmpty()) return;
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(14), dp(12), dp(14), dp(4));
+        menu.setBackground(rounded(Color.rgb(18, 22, 32), dp(18), BORDER, 1));
+        TextView title = text("CHOOSE SECTION", 12, TESLA_RED, true);
+        title.setLetterSpacing(0.08f);
+        title.setPadding(dp(6), 0, dp(6), dp(8));
+        menu.addView(title);
+
+        final PopupWindow[] popup = new PopupWindow[1];
+        for (String section : sectionNames) {
+            String subtitle = sectionProgress(section);
+            addMenuItem(menu, section, subtitle, section.equals(openSection), () -> {
+                popup[0].dismiss();
+                setOpenSection(section);
+            });
+        }
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(menu);
+        int maxHeight = Math.min(dp(600), getResources().getDisplayMetrics().heightPixels - dp(170));
+        popup[0] = new PopupWindow(scroll, dp(320), maxHeight, true);
+        popup[0].setOutsideTouchable(true);
+        popup[0].setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        popup[0].setElevation(dp(10));
+        popup[0].showAsDropDown(anchor, -dp(110), dp(6));
     }
 
     private void showOrderDetailsPage(boolean fromChecklist, String model) {
@@ -2050,7 +2122,7 @@ public class MainActivity extends Activity {
         customContent.addView(addCustomCheck, addParams);
 
         setupSectionDropdown();
-        setOpenSection(sectionNames.isEmpty() ? null : sectionNames.get(0));
+        setOpenSection(firstIncompleteSection());
     }
 
     private void setupSectionDropdown() {
@@ -2211,18 +2283,24 @@ public class MainActivity extends Activity {
 
         RadioGroup rg = new RadioGroup(this);
         rg.setOrientation(RadioGroup.HORIZONTAL);
-        rg.setPadding(0, dp(6), 0, 0);
+        rg.setPadding(0, dp(12), 0, 0);
         String[] labels = {"Pass", "Issue", "N/A"};
         for (int j=0; j<labels.length; j++) {
             RadioButton rb = new RadioButton(this);
             rb.setText(labels[j]);
-            rb.setTextColor(MUTED);
-            rb.setTextSize(14);
+            rb.setButtonDrawable(null);
+            rb.setGravity(Gravity.CENTER);
+            rb.setTextSize(13);
+            rb.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             rb.setId(1000 + index * 10 + j);
-            rg.addView(rb);
+            rb.setContentDescription(labels[j] + ": " + item.text);
+            LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+            if (j > 0) statusParams.setMargins(dp(6), 0, 0, 0);
+            rg.addView(rb, statusParams);
         }
         int savedStatus = prefs.getInt("status_" + index, -1);
         if (savedStatus >= 0) rg.check(1000 + index * 10 + savedStatus);
+        styleChecklistStatusButtons(rg, savedStatus);
         card.addView(rg);
 
         EditText notes = new EditText(this);
@@ -2241,8 +2319,10 @@ public class MainActivity extends Activity {
         rg.setOnCheckedChangeListener((group, checkedId) -> {
             int status = checkedId - (1000 + index * 10);
             prefs.edit().putInt("status_" + index, status).apply();
+            styleChecklistStatusButtons(rg, status);
             editIssue.setVisibility(status == 1 ? View.VISIBLE : View.GONE);
             updateProgress();
+            updateChecklistSectionNavigation();
             refreshSectionDropdown();
             if (status == 1) {
                 showIssueNoteDialog(index, item, notes);
@@ -2259,6 +2339,33 @@ public class MainActivity extends Activity {
             card.addView(remove, removeParams);
         }
         rows.add(new ItemRow(index, item, rg, notes));
+    }
+
+    private void styleChecklistStatusButtons(RadioGroup group, int selectedStatus) {
+        int passGreen = Color.rgb(51, 132, 83);
+        int issueRed = TESLA_RED;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            RadioButton button = (RadioButton) group.getChildAt(i);
+            boolean selected = i == selectedStatus;
+            int fill = SURFACE_2;
+            int border = BORDER;
+            int textColor = MUTED;
+            if (selected && i == 0) {
+                fill = Color.rgb(29, 72, 47);
+                border = passGreen;
+                textColor = Color.rgb(151, 240, 180);
+            } else if (selected && i == 1) {
+                fill = Color.rgb(73, 28, 37);
+                border = issueRed;
+                textColor = Color.WHITE;
+            } else if (selected) {
+                fill = Color.rgb(58, 64, 78);
+                border = Color.rgb(130, 140, 158);
+                textColor = TEXT;
+            }
+            button.setTextColor(textColor);
+            button.setBackground(rounded(fill, dp(11), border, selected ? 2 : 1));
+        }
     }
 
     private void addExpectedVin(LinearLayout card) {
@@ -2300,8 +2407,29 @@ public class MainActivity extends Activity {
                 updatingSectionSpinner = false;
             }
         }
+        updateChecklistSectionNavigation();
         updateProgress();
         refreshSectionDropdown();
+    }
+
+    private void updateChecklistSectionNavigation() {
+        if (sectionNavigationLabel == null || openSection == null) return;
+        int position = sectionNames.indexOf(openSection);
+        int issues = sectionIssueCount(openSection);
+        String label = openSection + "  ·  " + (position + 1) + "/" + sectionNames.size();
+        if (issues > 0) label += "  ·  " + issues + (issues == 1 ? " issue" : " issues");
+        sectionNavigationLabel.setText(label);
+        sectionNavigationLabel.setContentDescription(
+            openSection + ", section " + (position + 1) + " of " + sectionNames.size()
+        );
+        if (previousSectionButton != null) {
+            previousSectionButton.setEnabled(position > 0);
+            previousSectionButton.setAlpha(position > 0 ? 1f : 0.35f);
+        }
+        if (nextSectionButton != null) {
+            nextSectionButton.setEnabled(position >= 0 && position < sectionNames.size() - 1);
+            nextSectionButton.setAlpha(position >= 0 && position < sectionNames.size() - 1 ? 1f : 0.35f);
+        }
     }
 
     private int sectionIssueCount(String section) {
@@ -2581,7 +2709,6 @@ public class MainActivity extends Activity {
         if (progressBar != null) progressBar.setProgress(done);
         if (progress != null) {
             String overall = done + " / " + activeChecks.size() + " checks complete" + (issues > 0 ? " • " + issues + " issue(s)" : "");
-            if (openSection != null) overall += "\n" + openSection + ": " + sectionProgress(openSection);
             progress.setText(overall);
         }
     }
