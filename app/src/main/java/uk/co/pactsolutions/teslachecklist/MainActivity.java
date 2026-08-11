@@ -118,6 +118,12 @@ public class MainActivity extends Activity {
         Runnable onChanged;
     }
 
+    private static class OrderStageSection {
+        LinearLayout card;
+        LinearLayout content;
+        TextView disclosure;
+    }
+
     private class ItemRow {
         int index;
         CheckItem item;
@@ -956,9 +962,10 @@ public class MainActivity extends Activity {
         intro.setPadding(0, 0, 0, dp(12));
         root.addView(intro);
 
-        LinearLayout orderCard = addOrderStageCard(
+        OrderStageSection orderStage = addOrderStageCard(
             root, "01", "ORDER", "Details that identify your Tesla order."
         );
+        LinearLayout orderCard = orderStage.content;
         EditText orderNumber = addOrderField(
             orderCard, "Order number", "Example: RN123456789",
             orderPrefs.getString("order_number", ""),
@@ -981,9 +988,10 @@ public class MainActivity extends Activity {
         orderCard.addView(vinHint);
 
         addTimelineConnector(root);
-        LinearLayout eddCard = addOrderStageCard(
+        OrderStageSection eddStage = addOrderStageCard(
             root, "02", "ESTIMATED DELIVERY", "The delivery window shown in your Tesla account."
         );
+        LinearLayout eddCard = eddStage.content;
         LinearLayout eddDates = new LinearLayout(this);
         eddDates.setOrientation(LinearLayout.HORIZONTAL);
         eddCard.addView(eddDates, new LinearLayout.LayoutParams(-1, -2));
@@ -999,29 +1007,25 @@ public class MainActivity extends Activity {
         eddDates.addView(eddEndColumn, endColumnParams);
         EditText eddStart = addOrderSelectorField(
             eddStartColumn, "FROM", "Choose date",
-            orderPrefs.getString("order_edd_start", ""),
+            compactOrderDate(orderPrefs.getString("order_edd_start", "")),
             "Choose estimated delivery start date"
         );
         makeDatePickerField(eddStart);
         EditText eddEnd = addOrderSelectorField(
             eddEndColumn, "TO", "Choose date",
-            orderPrefs.getString("order_edd_end", ""),
+            compactOrderDate(orderPrefs.getString("order_edd_end", "")),
             "Choose estimated delivery end date"
         );
         makeDatePickerField(eddEnd);
 
         addTimelineConnector(root);
-        LinearLayout collectionCard = addOrderStageCard(
+        OrderStageSection collectionStage = addOrderStageCard(
             root, "03", "COLLECTION", "Add this once Tesla confirms your appointment."
         );
-        LinearLayout collectionContent = new LinearLayout(this);
-        collectionContent.setOrientation(LinearLayout.VERTICAL);
-        collectionCard.addView(collectionContent, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout collectionContent = collectionStage.content;
         boolean hasCollection = !orderPrefs.getString("order_collection_date", "").trim().isEmpty()
             || !orderPrefs.getString("order_collection_time", "").trim().isEmpty()
             || !orderPrefs.getString("order_collection_location_id", "").trim().isEmpty();
-        collectionContent.setVisibility(hasCollection ? View.VISIBLE : View.GONE);
-
         LinearLayout collectionDateTime = new LinearLayout(this);
         collectionDateTime.setOrientation(LinearLayout.HORIZONTAL);
         collectionContent.addView(collectionDateTime, new LinearLayout.LayoutParams(-1, -2));
@@ -1033,7 +1037,7 @@ public class MainActivity extends Activity {
         collectionDateTime.addView(collectionTimeColumn, endColumnParams);
         EditText collectionDate = addOrderSelectorField(
             collectionDateColumn, "DATE", "Choose date",
-            orderPrefs.getString("order_collection_date", ""),
+            compactOrderDate(orderPrefs.getString("order_collection_date", "")),
             "Choose collection date"
         );
         makeDatePickerField(collectionDate);
@@ -1045,14 +1049,44 @@ public class MainActivity extends Activity {
         makeTimePickerField(collectionTime);
         CollectionLocationSelection collectionLocation =
             addCollectionLocationSelector(collectionContent, orderPrefs);
-        if (!hasCollection) {
-            Button addCollection = secondaryButton("Add collection appointment");
-            addCollection.setOnClickListener(v -> {
-                collectionContent.setVisibility(View.VISIBLE);
-                v.setVisibility(View.GONE);
-            });
-            collectionCard.addView(addCollection, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        OrderStageSection[] orderStages = {orderStage, eddStage, collectionStage};
+        Button continueToEdd = primaryButton("Continue to estimated delivery");
+        continueToEdd.setOnClickListener(v -> {
+            if (validOrderVin(vin)) setExpandedOrderStage(orderStages, 1);
+        });
+        LinearLayout.LayoutParams continueParams = new LinearLayout.LayoutParams(-1, dp(46));
+        continueParams.setMargins(0, dp(12), 0, 0);
+        orderCard.addView(continueToEdd, continueParams);
+
+        Button continueToCollection = primaryButton("Continue to collection");
+        continueToCollection.setOnClickListener(v -> {
+            if (eddStart.getText().toString().trim().isEmpty()) {
+                eddStart.setError("Choose the first estimated delivery date");
+                eddStart.requestFocus();
+                return;
+            }
+            if (eddEnd.getText().toString().trim().isEmpty()) {
+                eddEnd.setError("Choose the last estimated delivery date");
+                eddEnd.requestFocus();
+                return;
+            }
+            if (validDeliveryDates(eddStart, eddEnd)) setExpandedOrderStage(orderStages, 2);
+        });
+        LinearLayout.LayoutParams eddContinueParams = new LinearLayout.LayoutParams(-1, dp(46));
+        eddContinueParams.setMargins(0, dp(4), 0, 0);
+        eddCard.addView(continueToCollection, eddContinueParams);
+
+        int initialStage = hasCollection ? 2
+            : (!eddStart.getText().toString().isEmpty() || !eddEnd.getText().toString().isEmpty()) ? 1 : 0;
+        for (int stageIndex = 0; stageIndex < orderStages.length; stageIndex++) {
+            final int targetStage = stageIndex;
+            orderStages[stageIndex].card.setOnClickListener(v ->
+                setExpandedOrderStage(orderStages, targetStage)
+            );
+            orderStages[stageIndex].content.setOnClickListener(v -> { });
         }
+        setExpandedOrderStage(orderStages, initialStage);
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
@@ -1068,12 +1102,12 @@ public class MainActivity extends Activity {
         root.addView(buttons, buttonRowParams);
 
         String[] initialValues = {
-            orderPrefs.getString("order_number", ""),
-            orderPrefs.getString("order_vin", ""),
-            orderPrefs.getString("order_edd_start", ""),
-            orderPrefs.getString("order_edd_end", ""),
-            orderPrefs.getString("order_collection_date", ""),
-            orderPrefs.getString("order_collection_time", ""),
+            orderNumber.getText().toString(),
+            vin.getText().toString(),
+            eddStart.getText().toString(),
+            eddEnd.getText().toString(),
+            collectionDate.getText().toString(),
+            collectionTime.getText().toString(),
             orderPrefs.getString("order_collection_location_id", "")
         };
         boolean[] dirty = { false };
@@ -1433,13 +1467,23 @@ public class MainActivity extends Activity {
 
     private Date parseOrderDate(String value) {
         if (value == null || value.trim().isEmpty()) return null;
-        SimpleDateFormat format = new SimpleDateFormat("dd MMMM yyyy", Locale.UK);
-        format.setLenient(false);
-        try {
-            return format.parse(value.trim());
-        } catch (Exception ignored) {
-            return null;
+        String dateText = value.trim();
+        for (String pattern : new String[] {"dd MMM yyyy", "dd MMMM yyyy"}) {
+            SimpleDateFormat format = new SimpleDateFormat(pattern, Locale.UK);
+            format.setLenient(false);
+            try {
+                return format.parse(dateText);
+            } catch (Exception ignored) { }
         }
+        return null;
+    }
+
+    private String compactOrderDate(String value) {
+        Date parsed = parseOrderDate(value);
+        if (parsed == null) return value == null ? "" : value.trim();
+        return new SimpleDateFormat("dd MMM yyyy", Locale.UK)
+            .format(parsed)
+            .toUpperCase(Locale.UK);
     }
 
     private long daysFromToday(Date target) {
@@ -1480,14 +1524,25 @@ public class MainActivity extends Activity {
     private Date collectionDateTime(android.content.SharedPreferences orderPrefs) {
         String date = orderPrefs.getString("order_collection_date", "").trim();
         if (date.isEmpty()) return null;
+        Date parsedDate = parseOrderDate(date);
+        if (parsedDate == null) return null;
         String time = orderPrefs.getString("order_collection_time", "").trim();
-        SimpleDateFormat format = new SimpleDateFormat(
-            time.isEmpty() ? "dd MMMM yyyy" : "dd MMMM yyyy HH:mm",
-            Locale.UK
-        );
-        format.setLenient(false);
+        Calendar collection = Calendar.getInstance();
+        collection.setTime(parsedDate);
+        collection.set(Calendar.HOUR_OF_DAY, 0);
+        collection.set(Calendar.MINUTE, 0);
+        collection.set(Calendar.SECOND, 0);
+        collection.set(Calendar.MILLISECOND, 0);
+        if (time.isEmpty()) return collection.getTime();
+        SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.UK);
+        timeFormat.setLenient(false);
         try {
-            return format.parse(time.isEmpty() ? date : date + " " + time);
+            Date parsedTime = timeFormat.parse(time);
+            Calendar clock = Calendar.getInstance();
+            clock.setTime(parsedTime);
+            collection.set(Calendar.HOUR_OF_DAY, clock.get(Calendar.HOUR_OF_DAY));
+            collection.set(Calendar.MINUTE, clock.get(Calendar.MINUTE));
+            return collection.getTime();
         } catch (Exception ignored) {
             return null;
         }
@@ -1667,7 +1722,7 @@ public class MainActivity extends Activity {
             .show();
     }
 
-    private LinearLayout addOrderStageCard(
+    private OrderStageSection addOrderStageCard(
         LinearLayout root,
         String number,
         String title,
@@ -1701,13 +1756,37 @@ public class MainActivity extends Activity {
         subtitleView.setPadding(0, dp(2), 0, 0);
         headingText.addView(subtitleView);
 
+        TextView disclosure = text("⌄", 22, MUTED, true);
+        disclosure.setGravity(Gravity.CENTER);
+        disclosure.setContentDescription("Expand " + title.toLowerCase(Locale.UK));
+        heading.addView(disclosure, new LinearLayout.LayoutParams(dp(32), dp(40)));
+
         Space space = new Space(this);
-        card.addView(space, new LinearLayout.LayoutParams(1, dp(14)));
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(space, new LinearLayout.LayoutParams(1, dp(14)));
+        card.addView(content, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
         cardParams.setMargins(0, 0, 0, 0);
         root.addView(card, cardParams);
-        return card;
+        OrderStageSection section = new OrderStageSection();
+        section.card = card;
+        section.content = content;
+        section.disclosure = disclosure;
+        return section;
+    }
+
+    private void setExpandedOrderStage(OrderStageSection[] stages, int expandedIndex) {
+        for (int index = 0; index < stages.length; index++) {
+            boolean expanded = index == expandedIndex;
+            stages[index].content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            stages[index].disclosure.setText(expanded ? "⌃" : "⌄");
+            stages[index].disclosure.setTextColor(expanded ? TESLA_RED : MUTED);
+            stages[index].card.setBackground(
+                rounded(SURFACE, dp(18), expanded ? TESLA_RED : BORDER, 1)
+            );
+        }
     }
 
     private void addTimelineConnector(LinearLayout root) {
@@ -1781,18 +1860,18 @@ public class MainActivity extends Activity {
         input.setOnClickListener(v -> {
             Calendar selected = Calendar.getInstance();
             String current = input.getText().toString().trim();
-            if (!current.isEmpty()) {
-                try {
-                    Date parsed = new SimpleDateFormat("dd MMMM yyyy", Locale.UK).parse(current);
-                    if (parsed != null) selected.setTime(parsed);
-                } catch (Exception ignored) { }
-            }
+            Date parsed = parseOrderDate(current);
+            if (parsed != null) selected.setTime(parsed);
             DatePickerDialog picker = new DatePickerDialog(
                 this,
                 (view, year, month, day) -> {
                     Calendar value = Calendar.getInstance();
                     value.set(year, month, day);
-                    input.setText(new SimpleDateFormat("dd MMMM yyyy", Locale.UK).format(value.getTime()));
+                    input.setText(
+                        new SimpleDateFormat("dd MMM yyyy", Locale.UK)
+                            .format(value.getTime())
+                            .toUpperCase(Locale.UK)
+                    );
                 },
                 selected.get(Calendar.YEAR),
                 selected.get(Calendar.MONTH),
