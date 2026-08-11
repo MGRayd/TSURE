@@ -27,6 +27,7 @@ public class MainActivity extends Activity {
     private static final int BORDER = Color.rgb(64, 72, 90);
     private static final int REQUEST_PICK_ISSUE_PHOTO = 2001;
     private static final int REQUEST_TAKE_ISSUE_PHOTO = 2002;
+    private static final int REQUEST_TESLA_AUTH = 2003;
 
     private LinearLayout list;
     private TextView progress;
@@ -53,6 +54,8 @@ public class MainActivity extends Activity {
     private Runnable orderDetailsBackAction;
     private boolean showingArchives = false;
     private boolean archivesOpenedFromChecklist = false;
+    private String pendingTeslaModel;
+    private boolean pendingTeslaFromChecklist;
 
     private static class CheckItem {
         String section;
@@ -962,6 +965,8 @@ public class MainActivity extends Activity {
         intro.setPadding(0, 0, 0, dp(12));
         root.addView(intro);
 
+        addTeslaImportCard(root, model, fromChecklist);
+
         OrderStageSection orderStage = addOrderStageCard(
             root, "01", "ORDER", "Details that identify your Tesla order."
         );
@@ -1170,6 +1175,169 @@ public class MainActivity extends Activity {
         });
 
         setContentView(page);
+    }
+
+    private void addTeslaImportCard(LinearLayout root, String model, boolean fromChecklist) {
+        TeslaTokenStore tokenStore = new TeslaTokenStore(this);
+        boolean connected = tokenStore.isConnected();
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(rounded(SURFACE_2, dp(16), connected ? TESLA_RED : BORDER, 1));
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        card.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView status = text(connected ? "TESLA CONNECTED" : "IMPORT FROM TESLA", 12, connected ? TESLA_RED : TEXT, true);
+        status.setLetterSpacing(0.08f);
+        heading.addView(status, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView readOnly = text("READ ONLY", 10, MUTED, true);
+        readOnly.setLetterSpacing(0.08f);
+        heading.addView(readOnly);
+
+        TextView explanation = text(
+            connected
+                ? "Refresh your active order to fill RN, VIN, delivery window and collection day."
+                : "Personal connection using Tesla sign-in. Your password is never stored by TSURE.",
+            13, MUTED, false
+        );
+        explanation.setPadding(0, dp(6), 0, dp(12));
+        card.addView(explanation);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button connect = primaryButton(connected ? "Refresh order" : "Connect Tesla");
+        actions.addView(connect, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        if (connected) {
+            Button disconnect = secondaryButton("Disconnect");
+            LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(dp(112), dp(44));
+            disconnectParams.setMargins(dp(8), 0, 0, 0);
+            actions.addView(disconnect, disconnectParams);
+            disconnect.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Disconnect Tesla?")
+                .setMessage("This removes the encrypted Tesla tokens from this device. Imported order details stay in TSURE.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Disconnect", (dialog, which) -> {
+                    new TeslaOrderClient(this).disconnect();
+                    Toast.makeText(this, "Tesla disconnected", Toast.LENGTH_SHORT).show();
+                    showOrderDetailsPage(fromChecklist, model);
+                })
+                .show());
+        }
+        card.addView(actions);
+        connect.setOnClickListener(v -> {
+            pendingTeslaModel = model;
+            pendingTeslaFromChecklist = fromChecklist;
+            if (new TeslaTokenStore(this).isConnected()) {
+                fetchTeslaOrdersForImport(model, fromChecklist);
+            } else {
+                startActivityForResult(new Intent(this, TeslaAuthActivity.class), REQUEST_TESLA_AUTH);
+            }
+        });
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(14));
+        root.addView(card, params);
+    }
+
+    private void fetchTeslaOrdersForImport(String model, boolean fromChecklist) {
+        final AlertDialog progressDialog = new AlertDialog.Builder(this)
+            .setTitle("Checking Tesla")
+            .setMessage("Retrieving your active orders…")
+            .setCancelable(false)
+            .create();
+        progressDialog.show();
+        new TeslaOrderClient(this).fetch(new TeslaOrderClient.Callback() {
+            @Override public void onSuccess(List<TeslaOrderClient.TeslaOrder> orders) {
+                progressDialog.dismiss();
+                if (orders.isEmpty()) {
+                    new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("No active orders found")
+                        .setMessage("Tesla did not return an active vehicle order for this account. You can keep entering details manually.")
+                        .setPositiveButton("OK", null)
+                        .show();
+                    return;
+                }
+                if (orders.size() == 1) {
+                    showTeslaImportPreview(orders.get(0), model, fromChecklist);
+                    return;
+                }
+                String[] labels = new String[orders.size()];
+                for (int index = 0; index < orders.size(); index++) labels[index] = orders.get(index).title();
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("Choose your order")
+                    .setItems(labels, (dialog, which) ->
+                        showTeslaImportPreview(orders.get(which), model, fromChecklist)
+                    )
+                    .setNegativeButton("Cancel", null)
+                    .show();
+            }
+
+            @Override public void onError(String message) {
+                progressDialog.dismiss();
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("Tesla import unavailable")
+                    .setMessage(message + "\n\nThis is a private, unofficial connection and Tesla may change it without notice.")
+                    .setNegativeButton("Keep connected", null)
+                    .setPositiveButton("Disconnect", (dialog, which) -> {
+                        new TeslaOrderClient(MainActivity.this).disconnect();
+                        showOrderDetailsPage(fromChecklist, model);
+                    })
+                    .show();
+            }
+        });
+    }
+
+    private void showTeslaImportPreview(
+        TeslaOrderClient.TeslaOrder order,
+        String model,
+        boolean fromChecklist
+    ) {
+        StringBuilder summary = new StringBuilder();
+        appendImportedField(summary, "RN", order.referenceNumber);
+        appendImportedField(summary, "VIN", order.vin);
+        appendImportedField(summary, "EDD", dateRange(order.eddStart, order.eddEnd));
+        appendImportedField(summary, "Collection", collectionSummary(order));
+        if (summary.length() == 0) summary.append("Tesla returned the order, but none of the supported delivery fields were present.");
+        new AlertDialog.Builder(this)
+            .setTitle("Import this Tesla order?")
+            .setMessage(summary.toString())
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Import details", (dialog, which) -> {
+                android.content.SharedPreferences orderPrefs = modelPreferences(model);
+                android.content.SharedPreferences.Editor editor = orderPrefs.edit();
+                if (!order.referenceNumber.isEmpty()) editor.putString("order_number", order.referenceNumber);
+                if (!order.vin.isEmpty()) editor.putString("order_vin", order.vin);
+                if (!order.eddStart.isEmpty()) editor.putString("order_edd_start", order.eddStart);
+                if (!order.eddEnd.isEmpty()) editor.putString("order_edd_end", order.eddEnd);
+                if (!order.collectionDate.isEmpty()) editor.putString("order_collection_date", order.collectionDate);
+                if (!order.collectionTime.isEmpty()) editor.putString("order_collection_time", order.collectionTime);
+                editor.apply();
+                Toast.makeText(this, "Tesla order imported", Toast.LENGTH_SHORT).show();
+                showOrderDetailsPage(fromChecklist, model);
+            })
+            .show();
+    }
+
+    private void appendImportedField(StringBuilder summary, String label, String value) {
+        if (value == null || value.trim().isEmpty()) return;
+        if (summary.length() > 0) summary.append("\n");
+        summary.append(label).append(": ").append(value.trim());
+    }
+
+    private String dateRange(String start, String end) {
+        if (start.isEmpty()) return end;
+        if (end.isEmpty()) return start;
+        return start + " – " + end;
+    }
+
+    private String collectionSummary(TeslaOrderClient.TeslaOrder order) {
+        if (!order.collectionDate.isEmpty()) {
+            return order.collectionDate + (order.collectionTime.isEmpty() ? "" : " at " + order.collectionTime);
+        }
+        return order.collectionSummary;
     }
 
     private void showOrderDetailsMenu(
@@ -2747,6 +2915,12 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_TESLA_AUTH) {
+            if (resultCode == RESULT_OK && pendingTeslaModel != null) {
+                fetchTeslaOrdersForImport(pendingTeslaModel, pendingTeslaFromChecklist);
+            }
+            return;
+        }
         if (resultCode != RESULT_OK || pendingIssuePhotoIndex < 0) return;
 
         Uri uri = null;
