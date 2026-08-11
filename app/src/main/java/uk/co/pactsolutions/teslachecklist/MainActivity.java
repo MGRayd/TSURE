@@ -47,6 +47,7 @@ public class MainActivity extends Activity {
     private AssetTeslaLocationRepository locationRepository;
     private boolean showingOrderDetails = false;
     private boolean orderDetailsOpenedFromChecklist = false;
+    private Runnable orderDetailsBackAction;
     private boolean showingArchives = false;
     private boolean archivesOpenedFromChecklist = false;
 
@@ -111,6 +112,7 @@ public class MainActivity extends Activity {
     private static class CollectionLocationSelection {
         String selectedId;
         Button selector;
+        Runnable onChanged;
     }
 
     private class ItemRow {
@@ -842,13 +844,18 @@ public class MainActivity extends Activity {
         rows.clear();
         progress = null;
 
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(BG);
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(BG);
+        page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(42), dp(20), dp(34));
+        root.setPadding(dp(20), dp(42), dp(20), dp(24));
         scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
 
         TextView eyebrow = text("DELIVERY INFORMATION", 12, TESLA_RED, true);
@@ -977,13 +984,46 @@ public class MainActivity extends Activity {
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.CENTER_VERTICAL);
+        applySystemBarPadding(buttons, dp(16), dp(12), dp(16), dp(12));
+        buttons.setBackground(rounded(Color.rgb(14, 17, 25), 0, BORDER, 1));
         Button cancel = secondaryButton("Cancel");
-        Button save = primaryButton("Save Details");
-        buttons.addView(cancel, weightParams());
-        buttons.addView(save, weightParams());
-        LinearLayout.LayoutParams buttonRowParams = new LinearLayout.LayoutParams(-1, dp(48));
-        buttonRowParams.setMargins(0, dp(18), 0, 0);
-        root.addView(buttons, buttonRowParams);
+        Button save = primaryButton("Save changes");
+        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(104), dp(48));
+        cancelParams.setMargins(0, 0, dp(10), 0);
+        buttons.addView(cancel, cancelParams);
+        buttons.addView(save, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        page.addView(buttons, new LinearLayout.LayoutParams(-1, -2));
+
+        String[] initialValues = {
+            orderPrefs.getString("order_number", ""),
+            orderPrefs.getString("order_vin", ""),
+            orderPrefs.getString("order_edd_start", ""),
+            orderPrefs.getString("order_edd_end", ""),
+            orderPrefs.getString("order_collection_date", ""),
+            orderPrefs.getString("order_collection_time", ""),
+            orderPrefs.getString("order_collection_location_id", "")
+        };
+        boolean[] dirty = { false };
+        Runnable refreshSaveState = () -> {
+            dirty[0] = orderFieldsChanged(
+                initialValues, orderNumber, vin, eddStart, eddEnd,
+                collectionDate, collectionTime, collectionLocation
+            );
+            save.setEnabled(dirty[0]);
+            save.setAlpha(dirty[0] ? 1f : 0.42f);
+            save.setText(dirty[0] ? "Save changes" : "Up to date");
+        };
+        watchOrderField(orderNumber, refreshSaveState);
+        watchOrderField(vin, refreshSaveState);
+        watchOrderField(eddStart, refreshSaveState);
+        watchOrderField(eddEnd, refreshSaveState);
+        watchOrderField(collectionDate, refreshSaveState);
+        watchOrderField(collectionTime, refreshSaveState);
+        collectionLocation.onChanged = refreshSaveState;
+        refreshSaveState.run();
+        Runnable attemptLeave = () -> confirmDiscardOrderChanges(dirty[0]);
+        orderDetailsBackAction = attemptLeave;
 
         Runnable archiveAction = () -> {
             if (!validOrderVin(vin)) return;
@@ -1013,16 +1053,17 @@ public class MainActivity extends Activity {
             showOrderDetailsMenu(orderMenu, archiveAction, clearAction)
         );
 
-        cancel.setOnClickListener(v -> leaveOrderDetails());
+        cancel.setOnClickListener(v -> attemptLeave.run());
         save.setOnClickListener(v -> {
             if (!validOrderVin(vin)) return;
             if (!validDeliveryDates(eddStart, eddEnd)) return;
             saveOrderFields(orderPrefs, orderNumber, vin, eddStart, eddEnd, collectionDate, collectionTime, collectionLocation);
+            dirty[0] = false;
             Toast.makeText(this, "Order details saved", Toast.LENGTH_SHORT).show();
             leaveOrderDetails();
         });
 
-        setContentView(scroll);
+        setContentView(page);
     }
 
     private void showOrderDetailsMenu(
@@ -1226,6 +1267,7 @@ public class MainActivity extends Activity {
                 item.setOnClickListener(v -> {
                     selection.selectedId = location.getId();
                     updateCollectionLocationSelection(selection);
+                    if (selection.onChanged != null) selection.onChanged.run();
                     dialog.dismiss();
                 });
                 LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
@@ -1244,6 +1286,7 @@ public class MainActivity extends Activity {
         custom.setOnClickListener(v -> {
             selection.selectedId = "custom";
             updateCollectionLocationSelection(selection);
+            if (selection.onChanged != null) selection.onChanged.run();
             dialog.dismiss();
         });
         LinearLayout.LayoutParams customParams = new LinearLayout.LayoutParams(-1, dp(50));
@@ -1503,6 +1546,55 @@ public class MainActivity extends Activity {
             .apply();
     }
 
+    private boolean orderFieldsChanged(
+        String[] initialValues,
+        EditText orderNumber,
+        EditText vin,
+        EditText eddStart,
+        EditText eddEnd,
+        EditText collectionDate,
+        EditText collectionTime,
+        CollectionLocationSelection collectionLocation
+    ) {
+        String[] currentValues = {
+            orderNumber.getText().toString().trim(),
+            vin.getText().toString().trim(),
+            eddStart.getText().toString().trim(),
+            eddEnd.getText().toString().trim(),
+            collectionDate.getText().toString().trim(),
+            collectionTime.getText().toString().trim(),
+            collectionLocation.selectedId == null ? "" : collectionLocation.selectedId
+        };
+        for (int i = 0; i < initialValues.length; i++) {
+            String initial = initialValues[i] == null ? "" : initialValues[i].trim();
+            if (!initial.equals(currentValues[i])) return true;
+        }
+        return false;
+    }
+
+    private void watchOrderField(EditText field, Runnable onChanged) {
+        field.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                onChanged.run();
+            }
+            @Override public void afterTextChanged(android.text.Editable s) { }
+        });
+    }
+
+    private void confirmDiscardOrderChanges(boolean hasChanges) {
+        if (!hasChanges) {
+            leaveOrderDetails();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Discard unsaved changes?")
+            .setMessage("Your edits to these order details have not been saved.")
+            .setNegativeButton("Keep editing", null)
+            .setPositiveButton("Discard", (dialog, which) -> leaveOrderDetails())
+            .show();
+    }
+
     private LinearLayout addOrderStageCard(
         LinearLayout root,
         String number,
@@ -1664,6 +1756,7 @@ public class MainActivity extends Activity {
     private void leaveOrderDetails() {
         boolean returnToChecklist = orderDetailsOpenedFromChecklist;
         showingOrderDetails = false;
+        orderDetailsBackAction = null;
         if (returnToChecklist) showChecklistPage();
         else showLandingPage();
     }
@@ -2896,7 +2989,8 @@ public class MainActivity extends Activity {
 
     private void handleBackNavigation() {
         if (showingOrderDetails) {
-            leaveOrderDetails();
+            if (orderDetailsBackAction != null) orderDetailsBackAction.run();
+            else leaveOrderDetails();
             return;
         }
         if (showingArchives) {
