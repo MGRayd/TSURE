@@ -1,6 +1,9 @@
 # Project exclude paths
 /.idea/
 /local.properties
+/keystore.properties
+*.jks
+*.keystore
 /.gradle/
 /.kotlin/
 /app/build/
