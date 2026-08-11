@@ -44,11 +44,73 @@ public class MainActivity extends Activity {
     private ImageView pendingIssuePhotoPreview;
     private android.content.SharedPreferences prefs;
     private android.content.SharedPreferences selectionPrefs;
+    private AssetTeslaLocationRepository locationRepository;
+    private boolean showingOrderDetails = false;
+    private boolean orderDetailsOpenedFromChecklist = false;
+    private boolean showingArchives = false;
+    private boolean archivesOpenedFromChecklist = false;
 
     private static class CheckItem {
         String section;
         String text;
         CheckItem(String section, String text) { this.section = section; this.text = text; }
+    }
+
+    private class SwipeViewFlipper extends ViewFlipper {
+        private float downX;
+        private float downY;
+        private boolean swiped;
+        private final int touchSlop;
+        private SwipeListener swipeListener;
+
+        SwipeViewFlipper(Context context) {
+            super(context);
+            touchSlop = Math.max(dp(8), ViewConfiguration.get(context).getScaledTouchSlop());
+        }
+
+        void setSwipeListener(SwipeListener listener) {
+            swipeListener = listener;
+        }
+
+        @Override public boolean onInterceptTouchEvent(MotionEvent event) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                downX = event.getX();
+                downY = event.getY();
+                swiped = false;
+                return false;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                float dx = event.getX() - downX;
+                float dy = event.getY() - downY;
+                if (Math.abs(dx) > touchSlop && Math.abs(dx) > Math.abs(dy)) {
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            float dx = event.getX() - downX;
+            if (!swiped && Math.abs(dx) >= dp(18)) {
+                swiped = true;
+                if (swipeListener != null) swipeListener.onSwipe(dx < 0 ? 1 : -1);
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_UP
+                || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                getParent().requestDisallowInterceptTouchEvent(false);
+            }
+            return true;
+        }
+    }
+
+    private interface SwipeListener {
+        void onSwipe(int direction);
+    }
+
+    private static class CollectionLocationSelection {
+        String selectedId;
+        Button selector;
     }
 
     private class ItemRow {
@@ -67,7 +129,9 @@ public class MainActivity extends Activity {
         new CheckItem("Before You Arrive", "VIN and delivery appointment confirmed"),
         new CheckItem("Before You Arrive", "Paperwork or trade-in documents if required"),
         new CheckItem("Before You Arrive", "Phone fully charged"),
+        new CheckItem("Before You Arrive", "Ensure insurance is active for collection day"),
 
+        new CheckItem("Exterior Checks Stage 1", "Match VIN on windscreen against mobile app and purchase/lease agreement"),
         new CheckItem("Exterior Checks Stage 1", "No scratches, dents, or paint chips on body panels"),
         new CheckItem("Exterior Checks Stage 1", "Consistent panel gaps and alignment: doors, boot, frunk, charge port"),
         new CheckItem("Exterior Checks Stage 1", "No smudges or uneven paint blending"),
@@ -138,11 +202,20 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         selectionPrefs = getSharedPreferences("tesla_checklist", MODE_PRIVATE);
+        locationRepository = new AssetTeslaLocationRepository(this);
         migrateLegacyModel3Checklist();
         migrateRemovedDoorHandleCheck();
         migrateDuplicateChecks();
         migrateReviewedChecklist();
+        migrateNewCollectionChecks();
+        migrateGlobalOrderDetails();
         setChecklistPreferences(selectedModel());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                this::handleBackNavigation
+            );
+        }
         showLandingPage();
     }
 
@@ -153,6 +226,30 @@ public class MainActivity extends Activity {
     private void setChecklistPreferences(String model) {
         String suffix = model.toLowerCase(Locale.UK).replace(" ", "_");
         prefs = getSharedPreferences("tesla_checklist_" + suffix, MODE_PRIVATE);
+    }
+
+    private android.content.SharedPreferences modelPreferences(String model) {
+        String suffix = model.toLowerCase(Locale.UK).replace(" ", "_");
+        return getSharedPreferences("tesla_checklist_" + suffix, MODE_PRIVATE);
+    }
+
+    private void migrateGlobalOrderDetails() {
+        if (selectionPrefs.getBoolean("model_order_details_migrated", false)) return;
+
+        android.content.SharedPreferences destination = modelPreferences(selectedModel());
+        android.content.SharedPreferences.Editor editor = destination.edit();
+        String[] keys = {
+            "order_number", "order_vin", "order_collection_date",
+            "order_collection_time", "order_collection_location",
+            "order_edd_start", "order_edd_end"
+        };
+        for (String key : keys) {
+            if (!destination.contains(key) && selectionPrefs.contains(key)) {
+                editor.putString(key, selectionPrefs.getString(key, ""));
+            }
+        }
+        editor.apply();
+        selectionPrefs.edit().putBoolean("model_order_details_migrated", true).apply();
     }
 
     private void selectModel(String model) {
@@ -256,6 +353,7 @@ public class MainActivity extends Activity {
 
     private void migrateReviewedChecklistForModel(android.content.SharedPreferences checklistPrefs) {
         final int oldBuiltInCount = 68;
+        final int reviewedBuiltInCount = 60;
         final int[] oldIndexForNewIndex = {
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
@@ -276,16 +374,54 @@ public class MainActivity extends Activity {
 
         for (int customIndex = 0; customIndex < customCount; customIndex++) {
             int source = oldBuiltInCount + customIndex;
-            int destination = CHECKS.length + customIndex;
+            int destination = reviewedBuiltInCount + customIndex;
             for (String prefix : prefixes) {
                 copyStoredChecklistValue(editor, snapshot, prefix + source, prefix + destination);
             }
         }
 
-        int newTotalCount = CHECKS.length + customCount;
+        int newTotalCount = reviewedBuiltInCount + customCount;
         int oldTotalCount = oldBuiltInCount + customCount;
         for (int index = newTotalCount; index < oldTotalCount; index++) {
             for (String prefix : prefixes) editor.remove(prefix + index);
+        }
+        editor.apply();
+    }
+
+    private void migrateNewCollectionChecks() {
+        if (selectionPrefs.getBoolean("new_collection_checks_2026_migrated", false)) return;
+
+        migrateNewCollectionChecksForModel(getSharedPreferences("tesla_checklist_model_3", MODE_PRIVATE));
+        migrateNewCollectionChecksForModel(getSharedPreferences("tesla_checklist_model_y", MODE_PRIVATE));
+        selectionPrefs.edit().putBoolean("new_collection_checks_2026_migrated", true).apply();
+    }
+
+    private void migrateNewCollectionChecksForModel(
+        android.content.SharedPreferences checklistPrefs
+    ) {
+        final int oldBuiltInCount = 60;
+        final int customCount = checklistPrefs.getInt("custom_count", 0);
+        final Map<String, ?> snapshot = new HashMap<>(checklistPrefs.getAll());
+        final android.content.SharedPreferences.Editor editor = checklistPrefs.edit();
+        final String[] prefixes = {"status_", "notes_", "photo_"};
+
+        for (int destination = 0; destination < CHECKS.length; destination++) {
+            if (destination == 5 || destination == 6) {
+                for (String prefix : prefixes) editor.remove(prefix + destination);
+                continue;
+            }
+            int source = destination < 5 ? destination : destination - 2;
+            for (String prefix : prefixes) {
+                copyStoredChecklistValue(editor, snapshot, prefix + source, prefix + destination);
+            }
+        }
+
+        for (int customIndex = 0; customIndex < customCount; customIndex++) {
+            int source = oldBuiltInCount + customIndex;
+            int destination = CHECKS.length + customIndex;
+            for (String prefix : prefixes) {
+                copyStoredChecklistValue(editor, snapshot, prefix + source, prefix + destination);
+            }
         }
         editor.apply();
     }
@@ -315,6 +451,8 @@ public class MainActivity extends Activity {
     private void showLandingPage() {
         rows.clear();
         progress = null;
+        showingOrderDetails = false;
+        showingArchives = false;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -323,28 +461,28 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setPadding(dp(22), dp(42), dp(22), dp(34));
+        applySystemBarPadding(root, dp(22), dp(28), dp(22), dp(20));
         scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
 
-        TextView badge = text("DELIVERY CHECKLIST", 13, TESLA_RED, true);
-        badge.setLetterSpacing(0.12f);
-        badge.setGravity(Gravity.CENTER);
-        root.addView(badge);
-
-        TextView title = text("TesSure", 32, TEXT, true);
+        TextView title = text("TesSure", 30, TESLA_RED, true);
         title.setGravity(Gravity.CENTER);
-        title.setPadding(0, dp(10), 0, dp(8));
         root.addView(title);
 
-        TextView subtitle = text("Choose your car, then work through the delivery checks before you drive away.", 16, MUTED, false);
+        TextView badge = text("DELIVERY CHECKLIST", 13, TEXT, true);
+        badge.setLetterSpacing(0.12f);
+        badge.setGravity(Gravity.CENTER);
+        badge.setPadding(0, dp(8), 0, dp(8));
+        root.addView(badge);
+
+        TextView subtitle = text("Choose your car and get ready for delivery.", 15, MUTED, false);
         subtitle.setGravity(Gravity.CENTER);
         subtitle.setLineSpacing(dp(2), 1.0f);
         root.addView(subtitle);
 
         Space topSpace = new Space(this);
-        root.addView(topSpace, new LinearLayout.LayoutParams(1, dp(28)));
+        root.addView(topSpace, new LinearLayout.LayoutParams(1, dp(20)));
 
-        ViewFlipper modelCarousel = new ViewFlipper(this);
+        SwipeViewFlipper modelCarousel = new SwipeViewFlipper(this);
         TextView carouselIndicator = text("", 14, MUTED, true);
         carouselIndicator.setGravity(Gravity.CENTER);
 
@@ -353,6 +491,13 @@ public class MainActivity extends Activity {
         int initialModel = "Model Y".equals(selectedModel()) ? 1 : 0;
         modelCarousel.setDisplayedChild(initialModel);
         updateCarouselIndicator(carouselIndicator, initialModel);
+        modelCarousel.setSwipeListener(direction ->
+            showCarouselModel(
+                modelCarousel,
+                carouselIndicator,
+                modelCarousel.getDisplayedChild() + direction
+            )
+        );
 
         LinearLayout.LayoutParams carouselParams = new LinearLayout.LayoutParams(-1, -2);
         carouselParams.setMargins(0, 0, 0, dp(10));
@@ -361,7 +506,65 @@ public class MainActivity extends Activity {
         carouselIndicator.setPadding(0, 0, 0, dp(8));
         root.addView(carouselIndicator);
 
+        if (selectionPrefs.getInt("archive_count", 0) > 0) {
+            Button archives = secondaryButton("View Archived Deliveries");
+            archives.setOnClickListener(v -> showArchivesPage(false));
+            root.addView(archives, fullWidthButtonParams());
+        }
+
         setContentView(scroll);
+    }
+
+    private void addOrderSummary(LinearLayout card, String modelName) {
+        android.content.SharedPreferences modelPrefs = modelPreferences(modelName);
+        String vin = modelPrefs.getString("order_vin", "").trim();
+        String eddStart = modelPrefs.getString("order_edd_start", "").trim();
+        String eddEnd = modelPrefs.getString("order_edd_end", "").trim();
+        String date = modelPrefs.getString("order_collection_date", "").trim();
+        String time = modelPrefs.getString("order_collection_time", "").trim();
+        String location = storedCollectionLocation(modelPrefs);
+        StringBuilder summary = new StringBuilder();
+        if (!vin.isEmpty()) summary.append("VIN: ").append(vin);
+        if (!eddStart.isEmpty() || !eddEnd.isEmpty()) {
+            if (summary.length() > 0) summary.append("\n");
+            summary.append("Estimated delivery:");
+            if (!eddStart.isEmpty()) summary.append(" ").append(eddStart);
+            if (!eddEnd.isEmpty()) summary.append(eddStart.isEmpty() ? " By " : " – ").append(eddEnd);
+        }
+        if (!date.isEmpty() || !time.isEmpty()) {
+            if (summary.length() > 0) summary.append("\n");
+            summary.append("Collection:");
+            if (!date.isEmpty()) summary.append(" ").append(date);
+            if (!time.isEmpty()) summary.append(" at ").append(time);
+        }
+        if (!location.isEmpty()) {
+            if (summary.length() > 0) summary.append("\n");
+            summary.append(location);
+        }
+        boolean hasOrderDetails = summary.length() > 0;
+        if (!hasOrderDetails) {
+            summary.append("No order details saved for this car.");
+        }
+        TextView detail = text(summary.toString(), 14, MUTED, false);
+        detail.setGravity(Gravity.CENTER);
+        detail.setPadding(0, dp(10), 0, dp(6));
+        detail.setLineSpacing(dp(2), 1.0f);
+        card.addView(detail);
+
+        String countdown = deliveryCountdown(modelPrefs);
+        if (!countdown.isEmpty()) {
+            TextView countdownView = text(countdown, 16, TEXT, true);
+            countdownView.setGravity(Gravity.CENTER);
+            countdownView.setPadding(dp(12), dp(10), dp(12), dp(10));
+            countdownView.setBackground(rounded(SURFACE_2, dp(12), TESLA_RED, 1));
+            LinearLayout.LayoutParams countdownParams = new LinearLayout.LayoutParams(-1, -2);
+            countdownParams.setMargins(0, dp(4), 0, dp(10));
+            card.addView(countdownView, countdownParams);
+        }
+
+        Button edit = secondaryButton(hasOrderDetails ? "Edit Order Details" : "Add Order Details");
+        edit.setOnClickListener(v -> showOrderDetailsPage(false, modelName));
+        card.addView(edit, new LinearLayout.LayoutParams(-1, dp(44)));
     }
 
     private void addModelCard(
@@ -374,7 +577,7 @@ public class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
-        card.setPadding(dp(22), dp(22), dp(22), dp(22));
+        card.setPadding(dp(18), dp(16), dp(18), dp(16));
         card.setBackground(rounded(SURFACE, dp(22), BORDER, 1));
         carousel.addView(card, new ViewGroup.LayoutParams(-1, -2));
 
@@ -383,51 +586,20 @@ public class MainActivity extends Activity {
         car.setAdjustViewBounds(true);
         car.setScaleType(ImageView.ScaleType.FIT_CENTER);
         car.setContentDescription(modelName + ". Swipe left or right to choose another model.");
-        final float[] touchStartX = new float[1];
-        final float[] touchStartY = new float[1];
-        final boolean[] swipeHandled = new boolean[1];
-        car.setOnTouchListener((view, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                touchStartX[0] = event.getX();
-                touchStartY[0] = event.getY();
-                swipeHandled[0] = false;
-                view.getParent().requestDisallowInterceptTouchEvent(true);
-                return true;
-            }
-            if (event.getAction() == MotionEvent.ACTION_MOVE && !swipeHandled[0]) {
-                float horizontal = event.getX() - touchStartX[0];
-                float vertical = event.getY() - touchStartY[0];
-                if (Math.abs(horizontal) >= dp(24) && Math.abs(horizontal) > Math.abs(vertical)) {
-                    int target = horizontal < 0 ? modelIndex + 1 : modelIndex - 1;
-                    showCarouselModel(carousel, indicator, target);
-                    swipeHandled[0] = true;
-                }
-                return true;
-            }
-            if (event.getAction() == MotionEvent.ACTION_UP) {
-                view.getParent().requestDisallowInterceptTouchEvent(false);
-                if (!swipeHandled[0]) view.performClick();
-                return true;
-            }
-            if (event.getAction() == MotionEvent.ACTION_CANCEL) {
-                view.getParent().requestDisallowInterceptTouchEvent(false);
-                return true;
-            }
-            return true;
-        });
-        card.addView(car, new LinearLayout.LayoutParams(-1, dp(170)));
+        card.addView(car, new LinearLayout.LayoutParams(-1, dp(145)));
 
         TextView model = text(modelName, 26, TEXT, true);
         model.setGravity(Gravity.CENTER);
-        model.setPadding(0, dp(12), 0, dp(2));
+        model.setPadding(0, dp(8), 0, 0);
         card.addView(model);
 
-        TextView detail = text("Delivery-day inspection", 15, MUTED, false);
+        TextView detail = text("Delivery checks", 14, MUTED, false);
         detail.setGravity(Gravity.CENTER);
         card.addView(detail);
 
-        android.content.SharedPreferences modelPrefs =
-            getSharedPreferences("tesla_checklist_" + modelName.toLowerCase(Locale.UK).replace(" ", "_"), MODE_PRIVATE);
+        addOrderSummary(card, modelName);
+
+        android.content.SharedPreferences modelPrefs = modelPreferences(modelName);
         boolean hasProgress = false;
         int modelCheckCount = CHECKS.length + modelPrefs.getInt("custom_count", 0);
         for (int i = 0; i < modelCheckCount && !hasProgress; i++) {
@@ -437,9 +609,23 @@ public class MainActivity extends Activity {
         }
         Button start = primaryButton((hasProgress ? "Continue " : "Start ") + modelName + " Checklist");
         start.setOnClickListener(v -> selectModel(modelName));
-        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(54));
-        buttonParams.setMargins(0, dp(18), 0, 0);
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(50));
+        buttonParams.setMargins(0, dp(14), 0, 0);
         card.addView(start, buttonParams);
+    }
+
+    private void applySystemBarPadding(View view, int left, int top, int right, int bottom) {
+        view.setPadding(left, top, right, bottom);
+        view.setOnApplyWindowInsetsListener((v, insets) -> {
+            v.setPadding(
+                left + insets.getSystemWindowInsetLeft(),
+                top + insets.getSystemWindowInsetTop(),
+                right + insets.getSystemWindowInsetRight(),
+                bottom + insets.getSystemWindowInsetBottom()
+            );
+            return insets;
+        });
+        view.requestApplyInsets();
     }
 
     private void showCarouselModel(ViewFlipper carousel, TextView indicator, int target) {
@@ -460,8 +646,12 @@ public class MainActivity extends Activity {
             android.view.animation.Animation.RELATIVE_TO_SELF, 0,
             android.view.animation.Animation.RELATIVE_TO_SELF, 0
         );
-        inAnimation.setDuration(220);
-        outAnimation.setDuration(220);
+        inAnimation.setDuration(160);
+        outAnimation.setDuration(160);
+        android.view.animation.DecelerateInterpolator interpolator =
+            new android.view.animation.DecelerateInterpolator();
+        inAnimation.setInterpolator(interpolator);
+        outAnimation.setInterpolator(interpolator);
         carousel.setInAnimation(inAnimation);
         carousel.setOutAnimation(outAnimation);
         carousel.setDisplayedChild(target);
@@ -475,6 +665,8 @@ public class MainActivity extends Activity {
 
     private void showChecklistPage() {
         rows.clear();
+        showingOrderDetails = false;
+        showingArchives = false;
         sectionSpinner = null;
         sectionAdapter = null;
         reloadActiveChecks();
@@ -555,6 +747,16 @@ public class MainActivity extends Activity {
             popup[0].dismiss();
             showIssues();
         });
+        addMenuItem(menu, "Order Details", "VIN and collection information", false, () -> {
+            popup[0].dismiss();
+            saveAllNotes();
+            showOrderDetailsPage(true, selectedModel());
+        });
+        addMenuItem(menu, "Archived Deliveries", "View previously archived checklists", false, () -> {
+            popup[0].dismiss();
+            saveAllNotes();
+            showArchivesPage(true);
+        });
         addMenuItem(menu, "Share Report", "Send the full checklist report", false, () -> {
             popup[0].dismiss();
             shareReport();
@@ -625,6 +827,789 @@ public class MainActivity extends Activity {
         fadeIn.setDuration(160);
         popup.update(dp(292), maxHeight);
         menu.startAnimation(fadeIn);
+    }
+
+    private void showOrderDetailsPage(boolean fromChecklist, String model) {
+        showingOrderDetails = true;
+        orderDetailsOpenedFromChecklist = fromChecklist;
+        android.content.SharedPreferences orderPrefs = modelPreferences(model);
+        rows.clear();
+        progress = null;
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(BG);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(20), dp(42), dp(20), dp(34));
+        scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
+
+        TextView eyebrow = text("DELIVERY INFORMATION", 12, TESLA_RED, true);
+        eyebrow.setLetterSpacing(0.12f);
+        root.addView(eyebrow);
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        root.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView title = text("Order Details", 28, TEXT, true);
+        title.setPadding(0, dp(6), 0, dp(4));
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        Button orderMenu = secondaryButton("☰");
+        orderMenu.setContentDescription("Order details menu");
+        orderMenu.setTextSize(22);
+        titleRow.addView(orderMenu, new LinearLayout.LayoutParams(dp(52), dp(48)));
+
+        TextView intro = text(
+            "Add details from your Tesla app. Saved only on this device.",
+            15, MUTED, false
+        );
+        intro.setLineSpacing(dp(2), 1.0f);
+        intro.setPadding(0, 0, 0, dp(12));
+        root.addView(intro);
+
+        EditText orderNumber = addOrderField(
+            root, "Order number", "Example: RN123456789",
+            orderPrefs.getString("order_number", ""),
+            android.text.InputType.TYPE_CLASS_TEXT
+        );
+        EditText vin = addOrderField(
+            root, "VIN", "17-character vehicle identification number",
+            orderPrefs.getString("order_vin", ""),
+            android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        );
+        vin.setFilters(new android.text.InputFilter[] {
+            new android.text.InputFilter.AllCaps(),
+            new android.text.InputFilter.LengthFilter(17)
+        });
+        TextView eddHeading = text("Estimated delivery window", 16, TESLA_RED, true);
+        eddHeading.setPadding(dp(2), dp(4), dp(2), dp(8));
+        root.addView(eddHeading);
+        EditText eddStart = addOrderField(
+            root, "EDD start date", "First estimated delivery date",
+            orderPrefs.getString("order_edd_start", ""),
+            android.text.InputType.TYPE_CLASS_TEXT
+        );
+        makeDatePickerField(eddStart);
+        EditText eddEnd = addOrderField(
+            root, "EDD end date", "Last estimated delivery date",
+            orderPrefs.getString("order_edd_end", ""),
+            android.text.InputType.TYPE_CLASS_TEXT
+        );
+        makeDatePickerField(eddEnd);
+        TextView collectionHeading = text("Collection appointment", 16, TESLA_RED, true);
+        collectionHeading.setPadding(dp(2), dp(4), dp(2), dp(8));
+        root.addView(collectionHeading);
+        EditText collectionDate = addOrderField(
+            root, "Collection date", "Example: 14 August 2026",
+            orderPrefs.getString("order_collection_date", ""),
+            android.text.InputType.TYPE_CLASS_TEXT
+        );
+        makeDatePickerField(collectionDate);
+        EditText collectionTime = addOrderField(
+            root, "Collection time", "Example: 10:30",
+            orderPrefs.getString("order_collection_time", ""),
+            android.text.InputType.TYPE_CLASS_DATETIME
+                | android.text.InputType.TYPE_DATETIME_VARIATION_TIME
+        );
+        makeTimePickerField(collectionTime);
+        CollectionLocationSelection collectionLocation =
+            addCollectionLocationSelector(root, orderPrefs);
+
+        TextView vinHint = text(
+            "The saved VIN appears with the collection-day VIN check.",
+            13, MUTED, false
+        );
+        vinHint.setPadding(dp(2), 0, dp(2), dp(8));
+        root.addView(vinHint);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        Button cancel = secondaryButton("Cancel");
+        Button save = primaryButton("Save Details");
+        buttons.addView(cancel, weightParams());
+        buttons.addView(save, weightParams());
+        LinearLayout.LayoutParams buttonRowParams = new LinearLayout.LayoutParams(-1, dp(48));
+        buttonRowParams.setMargins(0, dp(6), 0, 0);
+        root.addView(buttons, buttonRowParams);
+
+        Runnable archiveAction = () -> {
+            if (!validOrderVin(vin)) return;
+            if (!validDeliveryDates(eddStart, eddEnd)) return;
+            new AlertDialog.Builder(this)
+                .setTitle("Archive this delivery?")
+                .setMessage("A read-only copy of the " + model + " order and checklist will be saved. The active order, checklist progress, issues, photos, and custom checks will then be cleared.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Archive & Start New", (dialog, which) -> {
+                    saveOrderFields(orderPrefs, orderNumber, vin, eddStart, eddEnd, collectionDate, collectionTime, collectionLocation);
+                    archiveAndResetModel(model);
+                })
+                .show();
+        };
+
+        Runnable clearAction = () -> new AlertDialog.Builder(this)
+            .setTitle("Clear order details?")
+            .setMessage("This removes the saved order number, VIN, delivery window, collection date, time, and location for " + model + ". Checklist progress will not be changed.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Clear", (dialog, which) -> {
+                clearOrderDetails(orderPrefs);
+                Toast.makeText(this, "Order details cleared", Toast.LENGTH_SHORT).show();
+                showOrderDetailsPage(fromChecklist, model);
+            })
+            .show();
+        orderMenu.setOnClickListener(v ->
+            showOrderDetailsMenu(orderMenu, archiveAction, clearAction)
+        );
+
+        cancel.setOnClickListener(v -> leaveOrderDetails());
+        save.setOnClickListener(v -> {
+            if (!validOrderVin(vin)) return;
+            if (!validDeliveryDates(eddStart, eddEnd)) return;
+            saveOrderFields(orderPrefs, orderNumber, vin, eddStart, eddEnd, collectionDate, collectionTime, collectionLocation);
+            Toast.makeText(this, "Order details saved", Toast.LENGTH_SHORT).show();
+            leaveOrderDetails();
+        });
+
+        setContentView(scroll);
+    }
+
+    private void showOrderDetailsMenu(
+        View anchor,
+        Runnable archiveAction,
+        Runnable clearAction
+    ) {
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(14), dp(12), dp(14), dp(4));
+        menu.setBackground(rounded(SURFACE, dp(16), BORDER, 1));
+
+        TextView title = text("ORDER ACTIONS", 12, TESLA_RED, true);
+        title.setLetterSpacing(0.08f);
+        title.setPadding(dp(6), 0, dp(6), dp(8));
+        menu.addView(title);
+
+        final PopupWindow[] popup = new PopupWindow[1];
+        addMenuItem(
+            menu,
+            "Archive & Start New",
+            "Save a read-only copy and reset this delivery",
+            false,
+            () -> {
+                popup[0].dismiss();
+                archiveAction.run();
+            }
+        );
+        addMenuItem(
+            menu,
+            "Clear Order Details",
+            "Remove saved order information",
+            true,
+            () -> {
+                popup[0].dismiss();
+                clearAction.run();
+            }
+        );
+
+        popup[0] = new PopupWindow(menu, dp(292), WindowManager.LayoutParams.WRAP_CONTENT, true);
+        popup[0].setOutsideTouchable(true);
+        popup[0].setBackgroundDrawable(
+            new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        );
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            popup[0].setElevation(dp(10));
+        }
+        popup[0].showAsDropDown(anchor, -dp(240), dp(6));
+    }
+
+    private CollectionLocationSelection addCollectionLocationSelector(
+        LinearLayout root,
+        android.content.SharedPreferences orderPrefs
+    ) {
+        CollectionLocationSelection selection = new CollectionLocationSelection();
+        selection.selectedId = orderPrefs.getString("order_collection_location_id", "");
+
+        TextView label = text("Collection location", 14, TEXT, true);
+        label.setPadding(dp(2), 0, dp(2), dp(6));
+        root.addView(label);
+
+        selection.selector = secondaryButton("Choose collection location");
+        selection.selector.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        selection.selector.setPadding(dp(14), 0, dp(14), 0);
+        LinearLayout.LayoutParams selectorParams = new LinearLayout.LayoutParams(-1, dp(52));
+        selectorParams.setMargins(0, 0, 0, dp(6));
+        root.addView(selection.selector, selectorParams);
+
+        updateCollectionLocationSelection(selection);
+        selection.selector.setOnClickListener(v -> showCollectionLocationPicker(selection));
+        return selection;
+    }
+
+    private void showCollectionLocationPicker(CollectionLocationSelection selection) {
+        final Dialog dialog = new Dialog(this);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(18), dp(18), dp(18), dp(12));
+        content.setBackgroundColor(BG);
+
+        TextView title = text("Choose collection location", 22, TEXT, true);
+        title.setPadding(0, 0, 0, dp(12));
+        content.addView(title);
+
+        EditText search = new EditText(this);
+        search.setHint("Search name, city, postcode or country");
+        search.setHintTextColor(MUTED);
+        search.setTextColor(TEXT);
+        search.setSingleLine(true);
+        search.setTextSize(15);
+        search.setPadding(dp(14), 0, dp(14), 0);
+        search.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
+        content.addView(search, new LinearLayout.LayoutParams(-1, dp(50)));
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout results = new LinearLayout(this);
+        results.setOrientation(LinearLayout.VERTICAL);
+        results.setPadding(0, dp(12), 0, dp(8));
+        scroll.addView(results);
+        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        content.addView(scroll, scrollParams);
+
+        Runnable render = () -> renderCollectionLocationResults(
+            results, search.getText().toString(), selection, dialog
+        );
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                render.run();
+            }
+            @Override public void afterTextChanged(android.text.Editable s) {}
+        });
+        render.run();
+
+        dialog.setContentView(content);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT
+            );
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        }
+        dialog.setOnShowListener(ignored -> {
+            Window shownWindow = dialog.getWindow();
+            if (shownWindow != null) shownWindow.setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT
+            );
+        });
+        dialog.show();
+    }
+
+    private void renderCollectionLocationResults(
+        LinearLayout results,
+        String query,
+        CollectionLocationSelection selection,
+        Dialog dialog
+    ) {
+        results.removeAllViews();
+        String needle = query.trim().toLowerCase(Locale.ROOT);
+        LinkedHashMap<String, ArrayList<TeslaCollectionLocation>> groups = new LinkedHashMap<>();
+        groups.put("United Kingdom", new ArrayList<>());
+        groups.put("Northern Ireland", new ArrayList<>());
+        groups.put("Republic of Ireland", new ArrayList<>());
+        groups.put("European Union", new ArrayList<>());
+
+        for (TeslaCollectionLocation location : locationRepository.getAllLocationsNow()) {
+            String searchable = (
+                location.getLocationName() + " " + location.getCity() + " "
+                    + location.getPostcode() + " " + location.getCountryName()
+            ).toLowerCase(Locale.ROOT);
+            if (!needle.isEmpty() && !searchable.contains(needle)) continue;
+            String group;
+            if ("Northern Ireland".equals(location.getRegion())) group = "Northern Ireland";
+            else if ("GB".equals(location.getCountryCode())) group = "United Kingdom";
+            else if ("IE".equals(location.getCountryCode())) group = "Republic of Ireland";
+            else group = "European Union";
+            groups.get(group).add(location);
+        }
+
+        Comparator<TeslaCollectionLocation> locationOrder =
+            Comparator.comparing(
+                TeslaCollectionLocation::getCountryName,
+                String.CASE_INSENSITIVE_ORDER
+            ).thenComparing(
+                TeslaCollectionLocation::getCity,
+                String.CASE_INSENSITIVE_ORDER
+            ).thenComparing(
+                TeslaCollectionLocation::getLocationName,
+                String.CASE_INSENSITIVE_ORDER
+            );
+        for (ArrayList<TeslaCollectionLocation> locations : groups.values()) {
+            locations.sort(locationOrder);
+        }
+
+        int resultCount = 0;
+        for (Map.Entry<String, ArrayList<TeslaCollectionLocation>> entry : groups.entrySet()) {
+            if (entry.getValue().isEmpty()) continue;
+            TextView heading = text(entry.getKey().toUpperCase(Locale.ROOT), 12, TESLA_RED, true);
+            heading.setLetterSpacing(0.08f);
+            heading.setPadding(dp(4), dp(8), dp(4), dp(7));
+            results.addView(heading);
+            for (TeslaCollectionLocation location : entry.getValue()) {
+                resultCount++;
+                TextView item = text(
+                    location.getLocationName() + "\n"
+                        + location.getCity() + "  ·  " + location.getPostcode() + "\n"
+                        + location.getCountryName(),
+                    14, TEXT, false
+                );
+                item.setLineSpacing(dp(2), 1f);
+                item.setPadding(dp(14), dp(11), dp(14), dp(11));
+                item.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
+                item.setClickable(true);
+                item.setOnClickListener(v -> {
+                    selection.selectedId = location.getId();
+                    updateCollectionLocationSelection(selection);
+                    dialog.dismiss();
+                });
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+                params.setMargins(0, 0, 0, dp(8));
+                results.addView(item, params);
+            }
+        }
+
+        if (resultCount == 0) {
+            TextView empty = text("No matching collection locations", 14, MUTED, false);
+            empty.setPadding(dp(4), dp(14), dp(4), dp(14));
+            results.addView(empty);
+        }
+
+        Button custom = secondaryButton("My collection point is not listed");
+        custom.setOnClickListener(v -> {
+            selection.selectedId = "custom";
+            updateCollectionLocationSelection(selection);
+            dialog.dismiss();
+        });
+        LinearLayout.LayoutParams customParams = new LinearLayout.LayoutParams(-1, dp(50));
+        customParams.setMargins(0, dp(8), 0, dp(8));
+        results.addView(custom, customParams);
+    }
+
+    private void updateCollectionLocationSelection(CollectionLocationSelection selection) {
+        if ("custom".equals(selection.selectedId)) {
+            selection.selector.setText("My collection point is not listed");
+            return;
+        }
+        TeslaCollectionLocation location = findCollectionLocation(selection.selectedId);
+        if (location == null) {
+            selection.selector.setText("Choose collection location");
+        } else {
+            selection.selector.setText(location.getCity());
+        }
+    }
+
+    private TeslaCollectionLocation findCollectionLocation(String id) {
+        if (id == null || id.isEmpty() || "custom".equals(id)) return null;
+        for (TeslaCollectionLocation location : locationRepository.getAllLocationsNow()) {
+            if (id.equals(location.getId())) return location;
+        }
+        return null;
+    }
+
+    private String storedCollectionLocation(android.content.SharedPreferences orderPrefs) {
+        String id = orderPrefs.getString("order_collection_location_id", "");
+        TeslaCollectionLocation location = findCollectionLocation(id);
+        if (location != null) return location.formattedAddress();
+        if ("custom".equals(id)) {
+            return "My collection point is not listed";
+        }
+        return orderPrefs.getString("order_collection_location", "").trim();
+    }
+
+    private boolean validOrderVin(EditText vin) {
+        String enteredVin = vin.getText().toString().trim().toUpperCase(Locale.UK);
+        if (!enteredVin.isEmpty() && !enteredVin.matches("[A-HJ-NPR-Z0-9]{17}")) {
+            vin.setError("Enter a valid 17-character VIN");
+            vin.requestFocus();
+            return false;
+        }
+        return true;
+    }
+
+    private boolean validDeliveryDates(EditText eddStart, EditText eddEnd) {
+        String startText = eddStart.getText().toString().trim();
+        String endText = eddEnd.getText().toString().trim();
+        if (startText.isEmpty() && endText.isEmpty()) return true;
+        if (startText.isEmpty()) {
+            eddStart.setError("Choose the first estimated delivery date");
+            eddStart.requestFocus();
+            return false;
+        }
+        if (endText.isEmpty()) {
+            eddEnd.setError("Choose the last estimated delivery date");
+            eddEnd.requestFocus();
+            return false;
+        }
+        Date start = parseOrderDate(startText);
+        Date end = parseOrderDate(endText);
+        if (start == null || end == null || end.before(start)) {
+            eddEnd.setError("End date must be on or after the start date");
+            eddEnd.requestFocus();
+            return false;
+        }
+        return true;
+    }
+
+    private Date parseOrderDate(String value) {
+        if (value == null || value.trim().isEmpty()) return null;
+        SimpleDateFormat format = new SimpleDateFormat("dd MMMM yyyy", Locale.UK);
+        format.setLenient(false);
+        try {
+            return format.parse(value.trim());
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private long daysFromToday(Date target) {
+        java.time.LocalDate targetDay = target.toInstant()
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate();
+        return java.time.temporal.ChronoUnit.DAYS.between(
+            java.time.LocalDate.now(), targetDay
+        );
+    }
+
+    private String deliveryCountdown(android.content.SharedPreferences orderPrefs) {
+        Date collection = parseOrderDate(orderPrefs.getString("order_collection_date", ""));
+        if (collection != null) {
+            long days = daysFromToday(collection);
+            if (days == 0) return "Collection day is today";
+            if (days > 0) return "Collection in " + days + " day" + (days == 1 ? "" : "s");
+            long elapsed = Math.abs(days);
+            return "Collection was " + elapsed + " day" + (elapsed == 1 ? "" : "s") + " ago";
+        }
+
+        Date start = parseOrderDate(orderPrefs.getString("order_edd_start", ""));
+        if (start == null) return "";
+        long days = daysFromToday(start);
+        if (days == 0) return "Estimated delivery starts today";
+        if (days > 0) return "Estimated delivery starts in " + days + " day" + (days == 1 ? "" : "s");
+
+        Date end = parseOrderDate(orderPrefs.getString("order_edd_end", ""));
+        if (end != null) {
+            long daysToEnd = daysFromToday(end);
+            if (daysToEnd == 0) return "Estimated delivery window ends today";
+            if (daysToEnd > 0) return "In estimated delivery window · " + daysToEnd
+                + " day" + (daysToEnd == 1 ? "" : "s") + " remaining";
+        }
+        return "Estimated delivery window has passed";
+    }
+
+    private void saveOrderFields(
+        android.content.SharedPreferences orderPrefs,
+        EditText orderNumber,
+        EditText vin,
+        EditText eddStart,
+        EditText eddEnd,
+        EditText collectionDate,
+        EditText collectionTime,
+        CollectionLocationSelection collectionLocation
+    ) {
+        android.content.SharedPreferences.Editor editor = orderPrefs.edit()
+            .putString("order_number", orderNumber.getText().toString().trim())
+            .putString("order_vin", vin.getText().toString().trim().toUpperCase(Locale.UK))
+            .putString("order_edd_start", eddStart.getText().toString().trim())
+            .putString("order_edd_end", eddEnd.getText().toString().trim())
+            .putString("order_collection_date", collectionDate.getText().toString().trim())
+            .putString("order_collection_time", collectionTime.getText().toString().trim())
+            .remove("order_collection_location");
+        if (collectionLocation.selectedId == null || collectionLocation.selectedId.isEmpty()) {
+            editor.remove("order_collection_location_id");
+        } else {
+            editor.putString("order_collection_location_id", collectionLocation.selectedId);
+        }
+        editor
+            .remove("order_collection_custom_name")
+            .remove("order_collection_custom_address")
+            .remove("order_collection_custom_city")
+            .remove("order_collection_custom_postcode")
+            .remove("order_collection_custom_country");
+        editor.apply();
+    }
+
+    private void clearOrderDetails(android.content.SharedPreferences orderPrefs) {
+        orderPrefs.edit()
+            .remove("order_number")
+            .remove("order_vin")
+            .remove("order_edd_start")
+            .remove("order_edd_end")
+            .remove("order_collection_date")
+            .remove("order_collection_time")
+            .remove("order_collection_location")
+            .remove("order_collection_location_id")
+            .remove("order_collection_custom_name")
+            .remove("order_collection_custom_address")
+            .remove("order_collection_custom_city")
+            .remove("order_collection_custom_postcode")
+            .remove("order_collection_custom_country")
+            .apply();
+    }
+
+    private EditText addOrderField(
+        LinearLayout root,
+        String label,
+        String hint,
+        String value,
+        int inputType
+    ) {
+        TextView fieldLabel = text(label, 14, TEXT, true);
+        fieldLabel.setPadding(dp(2), 0, dp(2), dp(6));
+        root.addView(fieldLabel);
+
+        EditText input = new EditText(this);
+        input.setText(value);
+        input.setHint(hint);
+        input.setTextColor(TEXT);
+        input.setHintTextColor(MUTED);
+        input.setTextSize(16);
+        input.setInputType(inputType);
+        input.setSingleLine(true);
+        input.setPadding(dp(14), dp(12), dp(14), dp(12));
+        input.setBackground(rounded(SURFACE, dp(12), BORDER, 1));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(14));
+        root.addView(input, params);
+        return input;
+    }
+
+    private void makeDatePickerField(EditText input) {
+        input.setFocusable(false);
+        input.setClickable(true);
+        input.setOnClickListener(v -> {
+            Calendar selected = Calendar.getInstance();
+            String current = input.getText().toString().trim();
+            if (!current.isEmpty()) {
+                try {
+                    Date parsed = new SimpleDateFormat("dd MMMM yyyy", Locale.UK).parse(current);
+                    if (parsed != null) selected.setTime(parsed);
+                } catch (Exception ignored) { }
+            }
+            DatePickerDialog picker = new DatePickerDialog(
+                this,
+                (view, year, month, day) -> {
+                    Calendar value = Calendar.getInstance();
+                    value.set(year, month, day);
+                    input.setText(new SimpleDateFormat("dd MMMM yyyy", Locale.UK).format(value.getTime()));
+                },
+                selected.get(Calendar.YEAR),
+                selected.get(Calendar.MONTH),
+                selected.get(Calendar.DAY_OF_MONTH)
+            );
+            picker.show();
+        });
+    }
+
+    private void makeTimePickerField(EditText input) {
+        input.setFocusable(false);
+        input.setClickable(true);
+        input.setOnClickListener(v -> {
+            Calendar selected = Calendar.getInstance();
+            String current = input.getText().toString().trim();
+            if (!current.isEmpty()) {
+                try {
+                    Date parsed = new SimpleDateFormat("HH:mm", Locale.UK).parse(current);
+                    if (parsed != null) selected.setTime(parsed);
+                } catch (Exception ignored) { }
+            }
+            TimePickerDialog picker = new TimePickerDialog(
+                this,
+                (view, hour, minute) -> input.setText(String.format(Locale.UK, "%02d:%02d", hour, minute)),
+                selected.get(Calendar.HOUR_OF_DAY),
+                selected.get(Calendar.MINUTE),
+                true
+            );
+            picker.show();
+        });
+    }
+
+    private void leaveOrderDetails() {
+        boolean returnToChecklist = orderDetailsOpenedFromChecklist;
+        showingOrderDetails = false;
+        if (returnToChecklist) showChecklistPage();
+        else showLandingPage();
+    }
+
+    private void archiveAndResetModel(String model) {
+        android.content.SharedPreferences modelPrefs = modelPreferences(model);
+        String report = buildArchivedReport(model, modelPrefs);
+        String vin = modelPrefs.getString("order_vin", "").trim();
+        String orderNumber = modelPrefs.getString("order_number", "").trim();
+        String date = modelPrefs.getString("order_collection_date", "").trim();
+        String reference = !vin.isEmpty() ? "VIN …" + vin.substring(Math.max(0, vin.length() - 6))
+            : !orderNumber.isEmpty() ? orderNumber : "Delivery";
+        String title = model + " — " + reference;
+        if (!date.isEmpty()) title += " — " + date;
+
+        int archiveIndex = selectionPrefs.getInt("archive_count", 0);
+        selectionPrefs.edit()
+            .putString("archive_title_" + archiveIndex, title)
+            .putString("archive_report_" + archiveIndex, report)
+            .putLong("archive_created_" + archiveIndex, System.currentTimeMillis())
+            .putInt("archive_count", archiveIndex + 1)
+            .apply();
+
+        modelPrefs.edit().clear().apply();
+        Toast.makeText(this, "Delivery archived", Toast.LENGTH_SHORT).show();
+        showArchivesPage(orderDetailsOpenedFromChecklist);
+    }
+
+    private String buildArchivedReport(String model, android.content.SharedPreferences modelPrefs) {
+        ArrayList<CheckItem> snapshotChecks = new ArrayList<>();
+        Collections.addAll(snapshotChecks, CHECKS);
+        int customCount = modelPrefs.getInt("custom_count", 0);
+        for (int i = 0; i < customCount; i++) {
+            String customText = modelPrefs.getString("custom_text_" + i, "").trim();
+            if (!customText.isEmpty()) snapshotChecks.add(new CheckItem("Custom Checks", customText));
+        }
+
+        StringBuilder report = new StringBuilder();
+        report.append("Archived Tesla ").append(model).append(" Delivery Checklist\n");
+        report.append(new SimpleDateFormat("dd MMM yyyy HH:mm", Locale.UK).format(new Date())).append("\n\n");
+        appendOrderDetailsToReport(report, modelPrefs);
+        String currentSection = "";
+        for (int i = 0; i < snapshotChecks.size(); i++) {
+            CheckItem item = snapshotChecks.get(i);
+            if (!item.section.equals(currentSection)) {
+                currentSection = item.section;
+                report.append("\n").append(currentSection).append("\n");
+            }
+            int statusValue = modelPrefs.getInt("status_" + i, -1);
+            String status = statusValue == 0 ? "PASS" : statusValue == 1 ? "ISSUE"
+                : statusValue == 2 ? "N/A" : "NOT CHECKED";
+            report.append("- [").append(status).append("] ").append(item.text);
+            String note = modelPrefs.getString("notes_" + i, "").trim();
+            if (statusValue == 1 && !note.isEmpty()) report.append(" — ").append(note);
+            if (statusValue == 1 && !modelPrefs.getString("photo_" + i, "").trim().isEmpty()) {
+                report.append(" — Photo was attached");
+            }
+            report.append("\n");
+        }
+        return report.toString();
+    }
+
+    private void showArchivesPage(boolean fromChecklist) {
+        showingOrderDetails = false;
+        showingArchives = true;
+        archivesOpenedFromChecklist = fromChecklist;
+        rows.clear();
+        progress = null;
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(20), dp(42), dp(20), dp(34));
+        root.setBackgroundColor(BG);
+
+        TextView eyebrow = text("DELIVERY HISTORY", 12, TESLA_RED, true);
+        eyebrow.setLetterSpacing(0.12f);
+        root.addView(eyebrow);
+        TextView title = text("Archived Deliveries", 28, TEXT, true);
+        title.setPadding(0, dp(6), 0, dp(4));
+        root.addView(title);
+        TextView intro = text("Archived checklists are read-only snapshots stored on this device.", 14, MUTED, false);
+        intro.setPadding(0, 0, 0, dp(14));
+        root.addView(intro);
+
+        Button back = secondaryButton(fromChecklist ? "Back to Checklist" : "Back to Cars");
+        back.setOnClickListener(v -> leaveArchives());
+        root.addView(back, fullWidthButtonParams());
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout archiveList = new LinearLayout(this);
+        archiveList.setOrientation(LinearLayout.VERTICAL);
+        archiveList.setPadding(0, dp(14), 0, dp(30));
+        scroll.addView(archiveList);
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        int count = selectionPrefs.getInt("archive_count", 0);
+        if (count == 0) {
+            TextView empty = text("No deliveries have been archived yet.", 16, MUTED, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(0, dp(40), 0, 0);
+            archiveList.addView(empty);
+        }
+        for (int index = count - 1; index >= 0; index--) {
+            final int archiveIndex = index;
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(16), dp(14), dp(16), dp(14));
+            card.setBackground(rounded(SURFACE, dp(14), BORDER, 1));
+
+            String archiveTitle = selectionPrefs.getString("archive_title_" + index, "Archived delivery");
+            card.addView(text(archiveTitle, 17, TEXT, true));
+            long created = selectionPrefs.getLong("archive_created_" + index, 0);
+            if (created > 0) {
+                TextView createdText = text(
+                    "Archived " + new SimpleDateFormat("dd MMM yyyy HH:mm", Locale.UK).format(new Date(created)),
+                    13, MUTED, false
+                );
+                createdText.setPadding(0, dp(3), 0, dp(9));
+                card.addView(createdText);
+            }
+            Button view = secondaryButton("View or Share Checklist");
+            view.setOnClickListener(v -> showArchivedReport(archiveIndex));
+            card.addView(view, new LinearLayout.LayoutParams(-1, dp(46)));
+
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+            cardParams.setMargins(0, 0, 0, dp(12));
+            archiveList.addView(card, cardParams);
+        }
+        setContentView(root);
+    }
+
+    private void showArchivedReport(int archiveIndex) {
+        String title = selectionPrefs.getString("archive_title_" + archiveIndex, "Archived delivery");
+        String report = selectionPrefs.getString("archive_report_" + archiveIndex, "");
+        TextView reportView = text(report, 14, TEXT, false);
+        reportView.setTextIsSelectable(true);
+        reportView.setPadding(dp(18), dp(8), dp(18), dp(8));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(reportView);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(scroll)
+            .setNegativeButton("Close", null)
+            .setPositiveButton("Share", null)
+            .create();
+        dialog.setOnShowListener(ignored ->
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> shareArchivedReport(title, report))
+        );
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            WindowManager.LayoutParams params = window.getAttributes();
+            params.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.82f);
+            window.setAttributes(params);
+        }
+    }
+
+    private void shareArchivedReport(String title, String report) {
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_SUBJECT, title);
+        send.putExtra(Intent.EXTRA_TEXT, report);
+        startActivity(Intent.createChooser(send, "Share archived checklist"));
+    }
+
+    private void leaveArchives() {
+        boolean returnToChecklist = archivesOpenedFromChecklist;
+        showingArchives = false;
+        if (returnToChecklist) showChecklistPage();
+        else showLandingPage();
     }
 
     private TextView text(String value, int sp, int color, boolean bold) {
@@ -904,6 +1889,8 @@ public class MainActivity extends Activity {
         TextView question = text(item.text, 16, TEXT, false);
         card.addView(question);
 
+        if (index == 6) addExpectedVin(card);
+
         RadioGroup rg = new RadioGroup(this);
         rg.setOrientation(RadioGroup.HORIZONTAL);
         rg.setPadding(0, dp(6), 0, 0);
@@ -954,6 +1941,31 @@ public class MainActivity extends Activity {
             card.addView(remove, removeParams);
         }
         rows.add(new ItemRow(index, item, rg, notes));
+    }
+
+    private void addExpectedVin(LinearLayout card) {
+        String vin = prefs.getString("order_vin", "").trim();
+        TextView expected = text(
+            vin.isEmpty() ? "No expected VIN saved" : "EXPECTED VIN  " + vin,
+            vin.isEmpty() ? 13 : 15,
+            vin.isEmpty() ? MUTED : Color.rgb(116, 242, 160),
+            true
+        );
+        expected.setTextIsSelectable(!vin.isEmpty());
+        expected.setPadding(dp(12), dp(10), dp(12), dp(10));
+        expected.setBackground(rounded(SURFACE_2, dp(10), vin.isEmpty() ? BORDER : Color.rgb(75, 145, 98), 1));
+        LinearLayout.LayoutParams expectedParams = new LinearLayout.LayoutParams(-1, -2);
+        expectedParams.setMargins(0, dp(10), 0, 0);
+        card.addView(expected, expectedParams);
+
+        if (vin.isEmpty()) {
+            Button add = secondaryButton("Add expected VIN");
+            add.setTextSize(13);
+            add.setOnClickListener(v -> showOrderDetailsPage(true, selectedModel()));
+            LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(-1, dp(44));
+            addParams.setMargins(0, dp(8), 0, 0);
+            card.addView(add, addParams);
+        }
     }
 
     private void setOpenSection(String section) {
@@ -1261,6 +2273,7 @@ public class MainActivity extends Activity {
         StringBuilder sb = new StringBuilder();
         sb.append("Tesla ").append(selectedModel()).append(" Delivery Checklist Report\n");
         sb.append(new SimpleDateFormat("dd MMM yyyy HH:mm", Locale.UK).format(new Date())).append("\n\n");
+        appendOrderDetailsToReport(sb);
         String current = "";
         for (int i=0; i<activeChecks.size(); i++) {
             CheckItem item = activeChecks.get(i);
@@ -1280,6 +2293,39 @@ public class MainActivity extends Activity {
             sb.append("\n");
         }
         return sb.toString();
+    }
+
+    private void appendOrderDetailsToReport(StringBuilder report) {
+        appendOrderDetailsToReport(report, prefs);
+    }
+
+    private void appendOrderDetailsToReport(
+        StringBuilder report,
+        android.content.SharedPreferences orderPrefs
+    ) {
+        String orderNumber = orderPrefs.getString("order_number", "").trim();
+        String vin = orderPrefs.getString("order_vin", "").trim();
+        String eddStart = orderPrefs.getString("order_edd_start", "").trim();
+        String eddEnd = orderPrefs.getString("order_edd_end", "").trim();
+        String date = orderPrefs.getString("order_collection_date", "").trim();
+        String time = orderPrefs.getString("order_collection_time", "").trim();
+        String location = storedCollectionLocation(orderPrefs);
+        if (orderNumber.isEmpty() && vin.isEmpty() && eddStart.isEmpty() && eddEnd.isEmpty()
+            && date.isEmpty() && time.isEmpty() && location.isEmpty()) return;
+
+        report.append("Order Details\n");
+        if (!orderNumber.isEmpty()) report.append("Order: ").append(orderNumber).append("\n");
+        if (!vin.isEmpty()) report.append("VIN: ").append(vin).append("\n");
+        if (!eddStart.isEmpty() || !eddEnd.isEmpty()) {
+            report.append("Estimated delivery: ");
+            if (!eddStart.isEmpty()) report.append(eddStart);
+            if (!eddEnd.isEmpty()) report.append(eddStart.isEmpty() ? "By " : " to ").append(eddEnd);
+            report.append("\n");
+        }
+        if (!date.isEmpty()) report.append("Collection date: ").append(date).append("\n");
+        if (!time.isEmpty()) report.append("Collection time: ").append(time).append("\n");
+        if (!location.isEmpty()) report.append("Collection location: ").append(location).append("\n");
+        report.append("\n");
     }
 
     private void shareReport() {
@@ -1617,12 +2663,26 @@ public class MainActivity extends Activity {
             .show();
     }
 
+    @android.annotation.SuppressLint("GestureBackNavigation")
+    @SuppressWarnings("deprecation")
     @Override public void onBackPressed() {
+        handleBackNavigation();
+    }
+
+    private void handleBackNavigation() {
+        if (showingOrderDetails) {
+            leaveOrderDetails();
+            return;
+        }
+        if (showingArchives) {
+            leaveArchives();
+            return;
+        }
         CharSequence currentTitle = progress == null ? "" : progress.getText();
         if (currentTitle.length() > 0) {
             showLandingPage();
         } else {
-            super.onBackPressed();
+            finish();
         }
     }
 }
