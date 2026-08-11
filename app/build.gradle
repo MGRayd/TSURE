@@ -37,7 +37,7 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "TesSure-${variant.name}-${variant.versionName}.apk"
+            outputFileName = "TSURE-${variant.name}-${variant.versionName}.apk"
         }
     }
 }

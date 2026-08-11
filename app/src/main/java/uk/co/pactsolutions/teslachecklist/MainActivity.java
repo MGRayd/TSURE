@@ -464,7 +464,7 @@ public class MainActivity extends Activity {
         applySystemBarPadding(root, dp(22), dp(28), dp(22), dp(20));
         scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
 
-        TextView title = text("TesSure", 30, TESLA_RED, true);
+        TextView title = text("TSURE", 30, TESLA_RED, true);
         title.setGravity(Gravity.CENTER);
         root.addView(title);
 
@@ -2429,7 +2429,7 @@ public class MainActivity extends Activity {
         String report = buildReport();
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("text/plain");
-        send.putExtra(Intent.EXTRA_SUBJECT, "TesSure Delivery Checklist Report");
+        send.putExtra(Intent.EXTRA_SUBJECT, "TSURE Delivery Checklist Report");
         send.putExtra(Intent.EXTRA_TEXT, report);
         startActivity(Intent.createChooser(send, "Share checklist report"));
     }
