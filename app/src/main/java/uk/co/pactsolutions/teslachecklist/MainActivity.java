@@ -1338,21 +1338,36 @@ public class MainActivity extends Activity {
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(24), dp(12), dp(24), dp(8));
+        content.setPadding(dp(22), dp(20), dp(22), dp(8));
+        content.setBackground(rounded(SURFACE, dp(18), BORDER, 1));
+
+        TextView eyebrow = text("COLLECTION COUNTDOWN", 12, TESLA_RED, true);
+        eyebrow.setLetterSpacing(0.1f);
+        eyebrow.setGravity(Gravity.CENTER);
+        content.addView(eyebrow);
+
+        TextView heading = text("Your Tesla Awaits", 23, TEXT, true);
+        heading.setGravity(Gravity.CENTER);
+        heading.setPadding(0, dp(6), 0, dp(14));
+        content.addView(heading);
+
         TextView timer = text("", 28, TEXT, true);
         timer.setGravity(Gravity.CENTER);
-        timer.setPadding(0, dp(12), 0, dp(12));
-        content.addView(timer, new LinearLayout.LayoutParams(-1, -2));
+        timer.setPadding(dp(12), dp(18), dp(12), dp(18));
+        timer.setBackground(rounded(SURFACE_2, dp(14), TESLA_RED, 1));
+        LinearLayout.LayoutParams timerParams = new LinearLayout.LayoutParams(-1, -2);
+        timerParams.setMargins(0, 0, 0, dp(14));
+        content.addView(timer, timerParams);
         TextView dateLabel = text(
             "Collection: " + orderPrefs.getString("order_collection_date", "")
                 + (hasTime ? " at " + orderPrefs.getString("order_collection_time", "") : ""),
             15, MUTED, false
         );
         dateLabel.setGravity(Gravity.CENTER);
+        dateLabel.setPadding(0, 0, 0, dp(8));
         content.addView(dateLabel);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-            .setTitle("Collection Countdown")
             .setView(content)
             .setPositiveButton("Close", null)
             .create();
@@ -1377,7 +1392,16 @@ public class MainActivity extends Activity {
                 }
             }
         };
-        dialog.setOnShowListener(ignored -> updater.run());
+        dialog.setOnShowListener(ignored -> {
+            Button close = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            close.setTextColor(TESLA_RED);
+            close.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            Window window = dialog.getWindow();
+            if (window != null) {
+                window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            }
+            updater.run();
+        });
         dialog.setOnDismissListener(ignored -> handler.removeCallbacks(updater));
         dialog.show();
     }
