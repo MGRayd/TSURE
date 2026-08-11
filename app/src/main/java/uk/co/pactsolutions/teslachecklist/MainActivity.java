@@ -851,7 +851,7 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(BG);
-        page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        page.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -985,15 +985,15 @@ public class MainActivity extends Activity {
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.setGravity(Gravity.CENTER_VERTICAL);
-        applySystemBarPadding(buttons, dp(16), dp(12), dp(16), dp(12));
-        buttons.setBackground(rounded(Color.rgb(14, 17, 25), 0, BORDER, 1));
         Button cancel = secondaryButton("Cancel");
         Button save = primaryButton("Save changes");
         LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(104), dp(48));
         cancelParams.setMargins(0, 0, dp(10), 0);
         buttons.addView(cancel, cancelParams);
         buttons.addView(save, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        page.addView(buttons, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams buttonRowParams = new LinearLayout.LayoutParams(-1, -2);
+        buttonRowParams.setMargins(0, dp(18), 0, 0);
+        root.addView(buttons, buttonRowParams);
 
         String[] initialValues = {
             orderPrefs.getString("order_number", ""),
