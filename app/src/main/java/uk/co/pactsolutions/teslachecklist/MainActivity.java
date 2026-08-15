@@ -527,14 +527,14 @@ public class MainActivity extends Activity {
         String eddEnd = modelPrefs.getString("order_edd_end", "").trim();
         String date = modelPrefs.getString("order_collection_date", "").trim();
         String time = modelPrefs.getString("order_collection_time", "").trim();
-        String location = storedCollectionLocation(modelPrefs);
+        TeslaCollectionLocation collectionCentre = findCollectionLocation(
+            modelPrefs.getString("order_collection_location_id", "")
+        );
         StringBuilder summary = new StringBuilder();
-        if (!vin.isEmpty()) summary.append("VIN: ").append(vin);
+        if (!vin.isEmpty()) summary.append("VIN: ").append(homeVinReference(vin));
         if (!eddStart.isEmpty() || !eddEnd.isEmpty()) {
             if (summary.length() > 0) summary.append("\n");
-            summary.append("Estimated delivery:");
-            if (!eddStart.isEmpty()) summary.append(" ").append(eddStart);
-            if (!eddEnd.isEmpty()) summary.append(eddStart.isEmpty() ? " By " : " – ").append(eddEnd);
+            summary.append("EDD: ").append(homeEddRange(eddStart, eddEnd));
         }
         if (!date.isEmpty() || !time.isEmpty()) {
             if (summary.length() > 0) summary.append("\n");
@@ -542,11 +542,7 @@ public class MainActivity extends Activity {
             if (!date.isEmpty()) summary.append(" ").append(date);
             if (!time.isEmpty()) summary.append(" at ").append(time);
         }
-        if (!location.isEmpty()) {
-            if (summary.length() > 0) summary.append("\n");
-            summary.append(location);
-        }
-        boolean hasOrderDetails = summary.length() > 0;
+        boolean hasOrderDetails = summary.length() > 0 || collectionCentre != null;
         if (!hasOrderDetails) {
             summary.append("No order details saved for this car.");
         }
@@ -555,6 +551,17 @@ public class MainActivity extends Activity {
         detail.setPadding(0, dp(10), 0, dp(6));
         detail.setLineSpacing(dp(2), 1.0f);
         card.addView(detail);
+
+        if (collectionCentre != null) {
+            Button directions = secondaryButton(collectionCentre.getLocationName());
+            directions.setContentDescription(
+                collectionCentre.getLocationName() + ". Open directions in Google Maps."
+            );
+            directions.setOnClickListener(v -> openGoogleMapsDirections(collectionCentre));
+            LinearLayout.LayoutParams directionsParams = new LinearLayout.LayoutParams(-1, dp(48));
+            directionsParams.setMargins(0, dp(4), 0, dp(8));
+            card.addView(directions, directionsParams);
+        }
 
         String countdown = deliveryCountdown(modelPrefs);
         if (!countdown.isEmpty()) {
@@ -576,6 +583,42 @@ public class MainActivity extends Activity {
         Button edit = secondaryButton(hasOrderDetails ? "Edit Order Details" : "Add Order Details");
         edit.setOnClickListener(v -> showOrderDetailsPage(false, modelName));
         card.addView(edit, new LinearLayout.LayoutParams(-1, dp(44)));
+    }
+
+    private String homeVinReference(String vin) {
+        String trimmed = vin == null ? "" : vin.trim();
+        if (trimmed.length() < 6) return trimmed;
+        return trimmed.substring(trimmed.length() - 6, trimmed.length() - 3);
+    }
+
+    private String homeEddRange(String start, String end) {
+        Date startDate = parseOrderDate(start);
+        Date endDate = parseOrderDate(end);
+        if (startDate != null && endDate != null) {
+            return new SimpleDateFormat("dd MMM", Locale.UK).format(startDate)
+                + " – "
+                + new SimpleDateFormat("dd MMM yyyy", Locale.UK).format(endDate);
+        }
+        if (endDate != null) {
+            return new SimpleDateFormat("dd MMM yyyy", Locale.UK).format(endDate);
+        }
+        if (startDate != null) {
+            return new SimpleDateFormat("dd MMM yyyy", Locale.UK).format(startDate);
+        }
+        return dateRange(start, end);
+    }
+
+    private void openGoogleMapsDirections(TeslaCollectionLocation location) {
+        String destination;
+        if (location.getLatitude() != null && location.getLongitude() != null) {
+            destination = location.getLatitude() + "," + location.getLongitude();
+        } else {
+            destination = location.formattedAddress();
+        }
+        Uri webUri = Uri.parse(
+            "https://www.google.com/maps/dir/?api=1&destination=" + Uri.encode(destination)
+        );
+        startActivity(new Intent(Intent.ACTION_VIEW, webUri));
     }
 
     private void addModelCard(

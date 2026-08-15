@@ -8,6 +8,8 @@ Current version: **1.0.3**
 
 - **Model 3 and Model Y checklists** — choose your vehicle and work through delivery-day checks covering the exterior, interior, technology, charging, documents, and final handover.
 - **Saved progress** — checklist responses, notes, and photos are stored locally, with separate progress maintained for each supported model.
+- **Private order summary** — the home screen shows a shortened VIN reference and a compact EDD range instead of exposing the full VIN.
+- **Collection directions** — tap the saved collection centre name on the home screen to open directions in Google Maps.
 - **Clear inspection status** — mark every check as Pass, Issue, or N/A and see overall and section-level progress as you work.
 - **Section navigation** — quickly jump between checklist sections and see which sections are complete or contain issues.
 - **Issue evidence** — describe a problem and attach a photo from the gallery or camera when an item is marked as an issue.
@@ -33,3 +35,11 @@ Build a debug APK from the repository root:
 ```
 
 The APK is written to `app/build/outputs/apk/debug/`.
+
+A signed release build requires the project's private release keystore and a local, gitignored `keystore.properties` file. Once configured, build it with:
+
+```powershell
+.\gradlew.bat assembleRelease
+```
+
+The signed APK is written to `app/build/outputs/apk/release/`.
