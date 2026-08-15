@@ -52,8 +52,6 @@ public class MainActivity extends Activity {
     private boolean showingOrderDetails = false;
     private boolean orderDetailsOpenedFromChecklist = false;
     private Runnable orderDetailsBackAction;
-    private boolean showingArchives = false;
-    private boolean archivesOpenedFromChecklist = false;
     private String pendingTeslaModel;
     private boolean pendingTeslaFromChecklist;
 
@@ -466,7 +464,6 @@ public class MainActivity extends Activity {
         rows.clear();
         progress = null;
         showingOrderDetails = false;
-        showingArchives = false;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -519,12 +516,6 @@ public class MainActivity extends Activity {
 
         carouselIndicator.setPadding(0, 0, 0, dp(8));
         root.addView(carouselIndicator);
-
-        if (selectionPrefs.getInt("archive_count", 0) > 0) {
-            Button archives = secondaryButton("View Archived Deliveries");
-            archives.setOnClickListener(v -> showArchivesPage(false));
-            root.addView(archives, fullWidthButtonParams());
-        }
 
         setContentView(scroll);
     }
@@ -686,7 +677,6 @@ public class MainActivity extends Activity {
     private void showChecklistPage() {
         rows.clear();
         showingOrderDetails = false;
-        showingArchives = false;
         sectionSpinner = null;
         sectionAdapter = null;
         previousSectionButton = null;
@@ -803,11 +793,6 @@ public class MainActivity extends Activity {
             popup[0].dismiss();
             saveAllNotes();
             showOrderDetailsPage(true, selectedModel());
-        });
-        addMenuItem(menu, "Archived Deliveries", "View previously archived checklists", false, () -> {
-            popup[0].dismiss();
-            saveAllNotes();
-            showArchivesPage(true);
         });
         addMenuItem(menu, "Share Report", "Send the full checklist report", false, () -> {
             popup[0].dismiss();
@@ -1136,20 +1121,6 @@ public class MainActivity extends Activity {
         Runnable attemptLeave = () -> confirmDiscardOrderChanges(dirty[0]);
         orderDetailsBackAction = attemptLeave;
 
-        Runnable archiveAction = () -> {
-            if (!validOrderVin(vin)) return;
-            if (!validDeliveryDates(eddStart, eddEnd)) return;
-            new AlertDialog.Builder(this)
-                .setTitle("Archive this delivery?")
-                .setMessage("A read-only copy of the " + model + " order and checklist will be saved. The active order, checklist progress, issues, photos, and custom checks will then be cleared.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Archive & Start New", (dialog, which) -> {
-                    saveOrderFields(orderPrefs, orderNumber, vin, eddStart, eddEnd, collectionDate, collectionTime, collectionLocation);
-                    archiveAndResetModel(model);
-                })
-                .show();
-        };
-
         Runnable clearAction = () -> new AlertDialog.Builder(this)
             .setTitle("Clear order details?")
             .setMessage("This removes the saved order number, VIN, delivery window, collection date, time, and location for " + model + ". Checklist progress will not be changed.")
@@ -1161,7 +1132,7 @@ public class MainActivity extends Activity {
             })
             .show();
         orderMenu.setOnClickListener(v ->
-            showOrderDetailsMenu(orderMenu, archiveAction, clearAction)
+            showOrderDetailsMenu(orderMenu, clearAction)
         );
 
         cancel.setOnClickListener(v -> attemptLeave.run());
@@ -1431,7 +1402,6 @@ public class MainActivity extends Activity {
 
     private void showOrderDetailsMenu(
         View anchor,
-        Runnable archiveAction,
         Runnable clearAction
     ) {
         LinearLayout menu = new LinearLayout(this);
@@ -1445,16 +1415,6 @@ public class MainActivity extends Activity {
         menu.addView(title);
 
         final PopupWindow[] popup = new PopupWindow[1];
-        addMenuItem(
-            menu,
-            "Archive & Start New",
-            "Save a read-only copy and reset this delivery",
-            false,
-            () -> {
-                popup[0].dismiss();
-                archiveAction.run();
-            }
-        );
         addMenuItem(
             menu,
             "Clear Order Details",
@@ -2165,175 +2125,6 @@ public class MainActivity extends Activity {
         boolean returnToChecklist = orderDetailsOpenedFromChecklist;
         showingOrderDetails = false;
         orderDetailsBackAction = null;
-        if (returnToChecklist) showChecklistPage();
-        else showLandingPage();
-    }
-
-    private void archiveAndResetModel(String model) {
-        android.content.SharedPreferences modelPrefs = modelPreferences(model);
-        String report = buildArchivedReport(model, modelPrefs);
-        String vin = modelPrefs.getString("order_vin", "").trim();
-        String orderNumber = modelPrefs.getString("order_number", "").trim();
-        String date = modelPrefs.getString("order_collection_date", "").trim();
-        String reference = !vin.isEmpty() ? "VIN …" + vin.substring(Math.max(0, vin.length() - 6))
-            : !orderNumber.isEmpty() ? orderNumber : "Delivery";
-        String title = model + " — " + reference;
-        if (!date.isEmpty()) title += " — " + date;
-
-        int archiveIndex = selectionPrefs.getInt("archive_count", 0);
-        selectionPrefs.edit()
-            .putString("archive_title_" + archiveIndex, title)
-            .putString("archive_report_" + archiveIndex, report)
-            .putLong("archive_created_" + archiveIndex, System.currentTimeMillis())
-            .putInt("archive_count", archiveIndex + 1)
-            .apply();
-
-        modelPrefs.edit().clear().apply();
-        Toast.makeText(this, "Delivery archived", Toast.LENGTH_SHORT).show();
-        showArchivesPage(orderDetailsOpenedFromChecklist);
-    }
-
-    private String buildArchivedReport(String model, android.content.SharedPreferences modelPrefs) {
-        ArrayList<CheckItem> snapshotChecks = new ArrayList<>();
-        Collections.addAll(snapshotChecks, CHECKS);
-        int customCount = modelPrefs.getInt("custom_count", 0);
-        for (int i = 0; i < customCount; i++) {
-            String customText = modelPrefs.getString("custom_text_" + i, "").trim();
-            if (!customText.isEmpty()) snapshotChecks.add(new CheckItem("Custom Checks", customText));
-        }
-
-        StringBuilder report = new StringBuilder();
-        report.append("Archived Tesla ").append(model).append(" Delivery Checklist\n");
-        report.append(new SimpleDateFormat("dd MMM yyyy HH:mm", Locale.UK).format(new Date())).append("\n\n");
-        appendOrderDetailsToReport(report, modelPrefs);
-        String currentSection = "";
-        for (int i = 0; i < snapshotChecks.size(); i++) {
-            CheckItem item = snapshotChecks.get(i);
-            if (!item.section.equals(currentSection)) {
-                currentSection = item.section;
-                report.append("\n").append(currentSection).append("\n");
-            }
-            int statusValue = modelPrefs.getInt("status_" + i, -1);
-            String status = statusValue == 0 ? "PASS" : statusValue == 1 ? "ISSUE"
-                : statusValue == 2 ? "N/A" : "NOT CHECKED";
-            report.append("- [").append(status).append("] ").append(item.text);
-            String note = modelPrefs.getString("notes_" + i, "").trim();
-            if (statusValue == 1 && !note.isEmpty()) report.append(" — ").append(note);
-            if (statusValue == 1 && !modelPrefs.getString("photo_" + i, "").trim().isEmpty()) {
-                report.append(" — Photo was attached");
-            }
-            report.append("\n");
-        }
-        return report.toString();
-    }
-
-    private void showArchivesPage(boolean fromChecklist) {
-        showingOrderDetails = false;
-        showingArchives = true;
-        archivesOpenedFromChecklist = fromChecklist;
-        rows.clear();
-        progress = null;
-
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(42), dp(20), dp(34));
-        root.setBackgroundColor(BG);
-
-        TextView eyebrow = text("DELIVERY HISTORY", 12, TESLA_RED, true);
-        eyebrow.setLetterSpacing(0.12f);
-        root.addView(eyebrow);
-        TextView title = text("Archived Deliveries", 28, TEXT, true);
-        title.setPadding(0, dp(6), 0, dp(4));
-        root.addView(title);
-        TextView intro = text("Archived checklists are read-only snapshots stored on this device.", 14, MUTED, false);
-        intro.setPadding(0, 0, 0, dp(14));
-        root.addView(intro);
-
-        Button back = secondaryButton(fromChecklist ? "Back to Checklist" : "Back to Cars");
-        back.setOnClickListener(v -> leaveArchives());
-        root.addView(back, fullWidthButtonParams());
-
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout archiveList = new LinearLayout(this);
-        archiveList.setOrientation(LinearLayout.VERTICAL);
-        archiveList.setPadding(0, dp(14), 0, dp(30));
-        scroll.addView(archiveList);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-
-        int count = selectionPrefs.getInt("archive_count", 0);
-        if (count == 0) {
-            TextView empty = text("No deliveries have been archived yet.", 16, MUTED, false);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(40), 0, 0);
-            archiveList.addView(empty);
-        }
-        for (int index = count - 1; index >= 0; index--) {
-            final int archiveIndex = index;
-            LinearLayout card = new LinearLayout(this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(16), dp(14), dp(16), dp(14));
-            card.setBackground(rounded(SURFACE, dp(14), BORDER, 1));
-
-            String archiveTitle = selectionPrefs.getString("archive_title_" + index, "Archived delivery");
-            card.addView(text(archiveTitle, 17, TEXT, true));
-            long created = selectionPrefs.getLong("archive_created_" + index, 0);
-            if (created > 0) {
-                TextView createdText = text(
-                    "Archived " + new SimpleDateFormat("dd MMM yyyy HH:mm", Locale.UK).format(new Date(created)),
-                    13, MUTED, false
-                );
-                createdText.setPadding(0, dp(3), 0, dp(9));
-                card.addView(createdText);
-            }
-            Button view = secondaryButton("View or Share Checklist");
-            view.setOnClickListener(v -> showArchivedReport(archiveIndex));
-            card.addView(view, new LinearLayout.LayoutParams(-1, dp(46)));
-
-            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
-            cardParams.setMargins(0, 0, 0, dp(12));
-            archiveList.addView(card, cardParams);
-        }
-        setContentView(root);
-    }
-
-    private void showArchivedReport(int archiveIndex) {
-        String title = selectionPrefs.getString("archive_title_" + archiveIndex, "Archived delivery");
-        String report = selectionPrefs.getString("archive_report_" + archiveIndex, "");
-        TextView reportView = text(report, 14, TEXT, false);
-        reportView.setTextIsSelectable(true);
-        reportView.setPadding(dp(18), dp(8), dp(18), dp(8));
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(reportView);
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(scroll)
-            .setNegativeButton("Close", null)
-            .setPositiveButton("Share", null)
-            .create();
-        dialog.setOnShowListener(ignored ->
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> shareArchivedReport(title, report))
-        );
-        dialog.show();
-        Window window = dialog.getWindow();
-        if (window != null) {
-            WindowManager.LayoutParams params = window.getAttributes();
-            params.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.82f);
-            window.setAttributes(params);
-        }
-    }
-
-    private void shareArchivedReport(String title, String report) {
-        Intent send = new Intent(Intent.ACTION_SEND);
-        send.setType("text/plain");
-        send.putExtra(Intent.EXTRA_SUBJECT, title);
-        send.putExtra(Intent.EXTRA_TEXT, report);
-        startActivity(Intent.createChooser(send, "Share archived checklist"));
-    }
-
-    private void leaveArchives() {
-        boolean returnToChecklist = archivesOpenedFromChecklist;
-        showingArchives = false;
         if (returnToChecklist) showChecklistPage();
         else showLandingPage();
     }
@@ -3460,10 +3251,6 @@ public class MainActivity extends Activity {
         if (showingOrderDetails) {
             if (orderDetailsBackAction != null) orderDetailsBackAction.run();
             else leaveOrderDetails();
-            return;
-        }
-        if (showingArchives) {
-            leaveArchives();
             return;
         }
         CharSequence currentTitle = progress == null ? "" : progress.getText();
