@@ -28,6 +28,8 @@ public class MainActivity extends Activity {
     private static final int REQUEST_PICK_ISSUE_PHOTO = 2001;
     private static final int REQUEST_TAKE_ISSUE_PHOTO = 2002;
     private static final int REQUEST_TESLA_AUTH = 2003;
+    private static final String FEEDBACK_FORM_URL =
+        "https://docs.google.com/forms/d/e/1FAIpQLSdQTx3oRCPaXpmR6_hKGmDSPMOVnCjAew5vBpkXfiTbg50A-g/viewform";
 
     private LinearLayout list;
     private TextView progress;
@@ -864,6 +866,10 @@ public class MainActivity extends Activity {
         addMenuItem(menu, "Cars", "Return to car selection", false, () -> {
             popup[0].dismiss();
             showLandingPage();
+        });
+        addMenuItem(menu, "Send Feedback", "Open the anonymous feedback form", false, () -> {
+            popup[0].dismiss();
+            openFeedbackForm();
         });
         addMenuItem(menu, "Reset", "Clear checks and notes", false, () -> {
             popup[0].dismiss();
@@ -3023,6 +3029,15 @@ public class MainActivity extends Activity {
         startActivity(Intent.createChooser(send, "Share checklist report"));
     }
 
+    private void openFeedbackForm() {
+        Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(FEEDBACK_FORM_URL));
+        try {
+            startActivity(browser);
+        } catch (ActivityNotFoundException error) {
+            Toast.makeText(this, "No browser is available to open the feedback form", Toast.LENGTH_LONG).show();
+        }
+    }
+
     private String buildIssuesReport() {
         StringBuilder sb = new StringBuilder();
         sb.append("Tesla ").append(selectedModel()).append(" Delivery Issues\n");
@@ -3199,6 +3214,10 @@ public class MainActivity extends Activity {
         addMenuItem(menu, "Export / Send Issues", "Share the issue review with Tesla staff", true, () -> {
             popup[0].dismiss();
             shareIssuesReport();
+        });
+        addMenuItem(menu, "Send Feedback", "Open the anonymous feedback form", false, () -> {
+            popup[0].dismiss();
+            openFeedbackForm();
         });
         addMenuItem(menu, "Back to Checklist", "Return to the delivery checklist", false, () -> {
             popup[0].dismiss();
