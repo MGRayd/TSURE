@@ -4,6 +4,23 @@ TSURE is a simple Android checklist for inspecting a Tesla on collection day.
 
 Current version: **1.0.4**
 
+<table>
+  <tr>
+    <td><img src="docs/images/home-v1.0.4.png" width="260" alt="TSURE home screen"></td>
+    <td><img src="docs/images/order-details-v1.0.4.png" width="260" alt="TSURE order details"></td>
+    <td><img src="docs/images/checklist-v1.0.4.png" width="260" alt="TSURE delivery checklist"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/issue-details-v1.0.4.png" width="260" alt="TSURE issue details"></td>
+    <td><img src="docs/images/issue-photo-v1.0.4.png" width="260" alt="TSURE issue photo"></td>
+    <td><img src="docs/images/issue-review-v1.0.4.png" width="260" alt="TSURE issue review"></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/images/shared-report-v1.0.4.png" width="260" alt="TSURE shared issue report">
+</p>
+
 ## Features
 
 - **Model 3 and Model Y checklists** — choose your vehicle and work through delivery-day checks covering the exterior, interior, technology, charging, documents, and final handover.
