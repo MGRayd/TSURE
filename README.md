@@ -2,7 +2,7 @@
 
 TSURE is a simple Android checklist for inspecting a Tesla on collection day.
 
-Current version: **1.0.3**
+Current version: **1.0.4**
 
 ## Features
 

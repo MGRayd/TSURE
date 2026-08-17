@@ -3,7 +3,7 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
-def tesSureVersion = '1.0.3'
+def tesSureVersion = '1.0.4'
 def tesSureVersionParts = tesSureVersion.tokenize('.').collect { it as int }
 if (tesSureVersionParts.size() != 3 || tesSureVersionParts.any { it < 0 || it > 99 }) {
     throw new GradleException('tesSureVersion must use major.minor.patch with values from 0 to 99')
