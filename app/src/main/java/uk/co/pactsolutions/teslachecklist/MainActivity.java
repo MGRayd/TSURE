@@ -123,6 +123,7 @@ public class MainActivity extends Activity {
         LinearLayout card;
         LinearLayout content;
         TextView disclosure;
+        TextView subtitle;
     }
 
     private class ItemRow {
@@ -465,15 +466,11 @@ public class MainActivity extends Activity {
         progress = null;
         showingOrderDetails = false;
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(BG);
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        applySystemBarPadding(root, dp(22), dp(28), dp(22), dp(20));
-        scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
+        root.setBackgroundColor(BG);
+        applySystemBarPadding(root, dp(20), dp(20), dp(20), dp(14));
 
         TextView title = text("TSURE", 30, TESLA_RED, true);
         title.setGravity(Gravity.CENTER);
@@ -482,16 +479,16 @@ public class MainActivity extends Activity {
         TextView badge = text("DELIVERY CHECKLIST", 13, TEXT, true);
         badge.setLetterSpacing(0.12f);
         badge.setGravity(Gravity.CENTER);
-        badge.setPadding(0, dp(8), 0, dp(8));
+        badge.setPadding(0, dp(6), 0, dp(6));
         root.addView(badge);
 
         TextView subtitle = text("Choose your car and get ready for delivery.", 15, MUTED, false);
         subtitle.setGravity(Gravity.CENTER);
-        subtitle.setLineSpacing(dp(2), 1.0f);
+        subtitle.setSingleLine(true);
         root.addView(subtitle);
 
         Space topSpace = new Space(this);
-        root.addView(topSpace, new LinearLayout.LayoutParams(1, dp(20)));
+        root.addView(topSpace, new LinearLayout.LayoutParams(1, dp(14)));
 
         SwipeViewFlipper modelCarousel = new SwipeViewFlipper(this);
         TextView carouselIndicator = text("", 14, MUTED, true);
@@ -511,13 +508,13 @@ public class MainActivity extends Activity {
         );
 
         LinearLayout.LayoutParams carouselParams = new LinearLayout.LayoutParams(-1, -2);
-        carouselParams.setMargins(0, 0, 0, dp(10));
+        carouselParams.setMargins(0, 0, 0, dp(8));
         root.addView(modelCarousel, carouselParams);
 
-        carouselIndicator.setPadding(0, 0, 0, dp(8));
+        carouselIndicator.setPadding(0, 0, 0, dp(6));
         root.addView(carouselIndicator);
 
-        setContentView(scroll);
+        setContentView(root);
     }
 
     private void addOrderSummary(LinearLayout card, String modelName) {
@@ -532,57 +529,60 @@ public class MainActivity extends Activity {
         );
         StringBuilder summary = new StringBuilder();
         if (!vin.isEmpty()) summary.append("VIN: ").append(homeVinReference(vin));
-        if (!eddStart.isEmpty() || !eddEnd.isEmpty()) {
-            if (summary.length() > 0) summary.append("\n");
-            summary.append("EDD: ").append(homeEddRange(eddStart, eddEnd));
-        }
         if (!date.isEmpty() || !time.isEmpty()) {
             if (summary.length() > 0) summary.append("\n");
             summary.append("Collection:");
             if (!date.isEmpty()) summary.append(" ").append(date);
             if (!time.isEmpty()) summary.append(" at ").append(time);
         }
-        boolean hasOrderDetails = summary.length() > 0 || collectionCentre != null;
+        boolean hasEdd = !eddStart.isEmpty() || !eddEnd.isEmpty();
+        boolean hasOrderDetails = summary.length() > 0 || hasEdd || collectionCentre != null;
         if (!hasOrderDetails) {
             summary.append("No order details saved for this car.");
         }
         TextView detail = text(summary.toString(), 14, MUTED, false);
         detail.setGravity(Gravity.CENTER);
-        detail.setPadding(0, dp(10), 0, dp(6));
+        detail.setPadding(0, dp(8), 0, dp(2));
         detail.setLineSpacing(dp(2), 1.0f);
         card.addView(detail);
 
         if (collectionCentre != null) {
-            Button directions = secondaryButton(collectionCentre.getLocationName());
+            TextView directions = text(
+                collectionCentre.getLocationName() + "   ›", 15, TEXT, true
+            );
+            directions.setGravity(Gravity.CENTER);
+            directions.setPadding(dp(10), dp(8), dp(10), dp(8));
+            directions.setBackground(rounded(SURFACE_2, dp(12), TESLA_RED, 1));
+            directions.setClickable(true);
+            directions.setFocusable(true);
             directions.setContentDescription(
                 collectionCentre.getLocationName() + ". Open directions in Google Maps."
             );
             directions.setOnClickListener(v -> openGoogleMapsDirections(collectionCentre));
-            LinearLayout.LayoutParams directionsParams = new LinearLayout.LayoutParams(-1, dp(48));
-            directionsParams.setMargins(0, dp(4), 0, dp(8));
+            LinearLayout.LayoutParams directionsParams =
+                new LinearLayout.LayoutParams(-1, -2);
+            directionsParams.setMargins(0, dp(3), 0, dp(4));
             card.addView(directions, directionsParams);
         }
 
         String countdown = deliveryCountdown(modelPrefs);
         if (!countdown.isEmpty()) {
-            TextView countdownView = text(countdown, 16, TEXT, true);
+            TextView countdownView = text(countdown + "   ›", 15, TEXT, true);
             countdownView.setGravity(Gravity.CENTER);
-            countdownView.setPadding(dp(12), dp(10), dp(12), dp(10));
+            countdownView.setPadding(dp(10), dp(8), dp(10), dp(8));
             countdownView.setBackground(rounded(SURFACE_2, dp(12), TESLA_RED, 1));
-            if (parseOrderDate(modelPrefs.getString("order_collection_date", "")) != null) {
-                countdownView.setClickable(true);
-                countdownView.setFocusable(true);
-                countdownView.setContentDescription(countdown + ". Tap to view live countdown.");
-                countdownView.setOnClickListener(v -> showCollectionCountdown(modelPrefs));
-            }
+            countdownView.setClickable(true);
+            countdownView.setFocusable(true);
+            countdownView.setContentDescription(countdown + ". Open delivery countdown.");
+            countdownView.setOnClickListener(v -> showDeliveryCountdown(modelPrefs));
             LinearLayout.LayoutParams countdownParams = new LinearLayout.LayoutParams(-1, -2);
-            countdownParams.setMargins(0, dp(4), 0, dp(10));
+            countdownParams.setMargins(0, dp(3), 0, dp(7));
             card.addView(countdownView, countdownParams);
         }
 
         Button edit = secondaryButton(hasOrderDetails ? "Edit Order Details" : "Add Order Details");
         edit.setOnClickListener(v -> showOrderDetailsPage(false, modelName));
-        card.addView(edit, new LinearLayout.LayoutParams(-1, dp(44)));
+        card.addView(edit, new LinearLayout.LayoutParams(-1, dp(40)));
     }
 
     private String homeVinReference(String vin) {
@@ -631,7 +631,7 @@ public class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
-        card.setPadding(dp(18), dp(16), dp(18), dp(16));
+        card.setPadding(dp(18), dp(14), dp(18), dp(14));
         card.setBackground(rounded(SURFACE, dp(22), BORDER, 1));
         carousel.addView(card, new ViewGroup.LayoutParams(-1, -2));
 
@@ -640,11 +640,11 @@ public class MainActivity extends Activity {
         car.setAdjustViewBounds(true);
         car.setScaleType(ImageView.ScaleType.FIT_CENTER);
         car.setContentDescription(modelName + ". Swipe left or right to choose another model.");
-        card.addView(car, new LinearLayout.LayoutParams(-1, dp(145)));
+        card.addView(car, new LinearLayout.LayoutParams(-1, dp(130)));
 
         TextView model = text(modelName, 26, TEXT, true);
         model.setGravity(Gravity.CENTER);
-        model.setPadding(0, dp(8), 0, 0);
+        model.setPadding(0, dp(6), 0, 0);
         card.addView(model);
 
         TextView detail = text("Delivery checks", 14, MUTED, false);
@@ -663,8 +663,8 @@ public class MainActivity extends Activity {
         }
         Button start = primaryButton((hasProgress ? "Continue " : "Start ") + modelName + " Checklist");
         start.setOnClickListener(v -> selectModel(modelName));
-        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(50));
-        buttonParams.setMargins(0, dp(14), 0, 0);
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(48));
+        buttonParams.setMargins(0, dp(10), 0, 0);
         card.addView(start, buttonParams);
     }
 
@@ -675,6 +675,26 @@ public class MainActivity extends Activity {
                 left + insets.getSystemWindowInsetLeft(),
                 top + insets.getSystemWindowInsetTop(),
                 right + insets.getSystemWindowInsetRight(),
+                bottom + insets.getSystemWindowInsetBottom()
+            );
+            return insets;
+        });
+        view.requestApplyInsets();
+    }
+
+    private void applyBottomSystemBarPadding(
+        View view,
+        int left,
+        int top,
+        int right,
+        int bottom
+    ) {
+        view.setPadding(left, top, right, bottom);
+        view.setOnApplyWindowInsetsListener((v, insets) -> {
+            v.setPadding(
+                left,
+                top,
+                right,
                 bottom + insets.getSystemWindowInsetBottom()
             );
             return insets;
@@ -957,40 +977,30 @@ public class MainActivity extends Activity {
         page.setOrientation(LinearLayout.VERTICAL);
         page.setBackgroundColor(BG);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(BG);
-        page.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(42), dp(20), dp(24));
-        scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
-
-        TextView eyebrow = text("DELIVERY INFORMATION", 12, TESLA_RED, true);
-        eyebrow.setLetterSpacing(0.12f);
-        root.addView(eyebrow);
+        applyBottomSystemBarPadding(root, dp(16), dp(40), dp(16), dp(12));
+        page.addView(root, new LinearLayout.LayoutParams(-1, -1));
 
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView title = text("Order Details", 28, TEXT, true);
-        title.setPadding(0, dp(6), 0, dp(4));
+        TextView title = text("Order Details", 24, TEXT, true);
         titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
 
         Button orderMenu = secondaryButton("☰");
         orderMenu.setContentDescription("Order details menu");
-        orderMenu.setTextSize(22);
-        titleRow.addView(orderMenu, new LinearLayout.LayoutParams(dp(52), dp(48)));
+        orderMenu.setTextSize(20);
+        titleRow.addView(orderMenu, new LinearLayout.LayoutParams(dp(48), dp(44)));
 
         TextView intro = text(
-            "Add details from your Tesla app. Saved only on this device.",
-            15, MUTED, false
+            "Tesla order details · saved only on this device",
+            12, MUTED, false
         );
-        intro.setLineSpacing(dp(2), 1.0f);
-        intro.setPadding(0, 0, 0, dp(12));
+        intro.setSingleLine(true);
+        intro.setPadding(0, dp(2), 0, dp(8));
         root.addView(intro);
 
         addTeslaImportCard(root, model, fromChecklist);
@@ -1016,8 +1026,10 @@ public class MainActivity extends Activity {
         });
         TextView vinHint = text(
             "This VIN appears beside the collection-day VIN check.",
-            13, MUTED, false
+            11, MUTED, false
         );
+        vinHint.setSingleLine(true);
+        vinHint.setEllipsize(android.text.TextUtils.TruncateAt.END);
         orderCard.addView(vinHint);
 
         addTimelineConnector(root);
@@ -1084,12 +1096,16 @@ public class MainActivity extends Activity {
             addCollectionLocationSelector(collectionContent, orderPrefs);
 
         OrderStageSection[] orderStages = {orderStage, eddStage, collectionStage};
+        int[] expandedStage = { -1 };
         Button continueToEdd = primaryButton("Continue to estimated delivery");
         continueToEdd.setOnClickListener(v -> {
-            if (validOrderVin(vin)) setExpandedOrderStage(orderStages, 1);
+            if (validOrderVin(vin)) {
+                expandedStage[0] = 1;
+                setExpandedOrderStage(orderStages, expandedStage[0]);
+            }
         });
-        LinearLayout.LayoutParams continueParams = new LinearLayout.LayoutParams(-1, dp(46));
-        continueParams.setMargins(0, dp(12), 0, 0);
+        LinearLayout.LayoutParams continueParams = new LinearLayout.LayoutParams(-1, dp(42));
+        continueParams.setMargins(0, dp(6), 0, 0);
         orderCard.addView(continueToEdd, continueParams);
 
         Button continueToCollection = primaryButton("Continue to collection");
@@ -1104,34 +1120,42 @@ public class MainActivity extends Activity {
                 eddEnd.requestFocus();
                 return;
             }
-            if (validDeliveryDates(eddStart, eddEnd)) setExpandedOrderStage(orderStages, 2);
+            if (validDeliveryDates(eddStart, eddEnd)) {
+                expandedStage[0] = 2;
+                setExpandedOrderStage(orderStages, expandedStage[0]);
+            }
         });
-        LinearLayout.LayoutParams eddContinueParams = new LinearLayout.LayoutParams(-1, dp(46));
-        eddContinueParams.setMargins(0, dp(4), 0, 0);
+        LinearLayout.LayoutParams eddContinueParams = new LinearLayout.LayoutParams(-1, dp(42));
+        eddContinueParams.setMargins(0, 0, 0, 0);
         eddCard.addView(continueToCollection, eddContinueParams);
 
         int initialStage = hasCollection ? 2
             : (!eddStart.getText().toString().isEmpty() || !eddEnd.getText().toString().isEmpty()) ? 1 : 0;
         for (int stageIndex = 0; stageIndex < orderStages.length; stageIndex++) {
             final int targetStage = stageIndex;
-            orderStages[stageIndex].card.setOnClickListener(v ->
-                setExpandedOrderStage(orderStages, targetStage)
-            );
+            orderStages[stageIndex].card.setOnClickListener(v -> {
+                expandedStage[0] = expandedStage[0] == targetStage ? -1 : targetStage;
+                setExpandedOrderStage(orderStages, expandedStage[0]);
+            });
             orderStages[stageIndex].content.setOnClickListener(v -> { });
         }
-        setExpandedOrderStage(orderStages, initialStage);
+        expandedStage[0] = initialStage;
+        setExpandedOrderStage(orderStages, expandedStage[0]);
+
+        Space pageSpacer = new Space(this);
+        root.addView(pageSpacer, new LinearLayout.LayoutParams(1, 0, 1f));
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.setGravity(Gravity.CENTER_VERTICAL);
         Button cancel = secondaryButton("Cancel");
         Button save = primaryButton("Save changes");
-        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(104), dp(48));
-        cancelParams.setMargins(0, 0, dp(10), 0);
+        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(96), dp(44));
+        cancelParams.setMargins(0, 0, dp(8), 0);
         buttons.addView(cancel, cancelParams);
-        buttons.addView(save, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        buttons.addView(save, new LinearLayout.LayoutParams(0, dp(44), 1f));
         LinearLayout.LayoutParams buttonRowParams = new LinearLayout.LayoutParams(-1, -2);
-        buttonRowParams.setMargins(0, dp(18), 0, 0);
+        buttonRowParams.setMargins(0, dp(10), 0, 0);
         root.addView(buttons, buttonRowParams);
 
         String[] initialValues = {
@@ -1196,18 +1220,18 @@ public class MainActivity extends Activity {
         boolean connected = tokenStore.isConnected();
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setBackground(rounded(SURFACE_2, dp(16), connected ? TESLA_RED : BORDER, 1));
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setBackground(rounded(SURFACE_2, dp(14), connected ? TESLA_RED : BORDER, 1));
 
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.HORIZONTAL);
         heading.setGravity(Gravity.CENTER_VERTICAL);
         card.addView(heading, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView status = text(connected ? "TESLA CONNECTED" : "IMPORT FROM TESLA", 12, connected ? TESLA_RED : TEXT, true);
+        TextView status = text(connected ? "TESLA CONNECTED" : "IMPORT FROM TESLA", 11, connected ? TESLA_RED : TEXT, true);
         status.setLetterSpacing(0.08f);
         heading.addView(status, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView readOnly = text("READ ONLY", 10, MUTED, true);
+        TextView readOnly = text("READ ONLY", 9, MUTED, true);
         readOnly.setLetterSpacing(0.08f);
         heading.addView(readOnly);
 
@@ -1215,18 +1239,18 @@ public class MainActivity extends Activity {
             connected
                 ? "Refresh your active order to fill RN, VIN, delivery window and collection day."
                 : "Personal connection using Tesla sign-in. Your password is never stored by TSURE.",
-            13, MUTED, false
+            12, MUTED, false
         );
-        explanation.setPadding(0, dp(6), 0, dp(12));
+        explanation.setPadding(0, dp(4), 0, dp(8));
         card.addView(explanation);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         Button connect = primaryButton(connected ? "Refresh order" : "Connect Tesla");
-        actions.addView(connect, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        actions.addView(connect, new LinearLayout.LayoutParams(0, dp(40), 1f));
         if (connected) {
             Button disconnect = secondaryButton("Disconnect");
-            LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(dp(112), dp(44));
+            LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(dp(106), dp(40));
             disconnectParams.setMargins(dp(8), 0, 0, 0);
             actions.addView(disconnect, disconnectParams);
             disconnect.setOnClickListener(v -> new AlertDialog.Builder(this)
@@ -1252,7 +1276,7 @@ public class MainActivity extends Activity {
         });
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(0, 0, 0, dp(14));
+        params.setMargins(0, 0, 0, dp(8));
         root.addView(card, params);
     }
 
@@ -1494,13 +1518,13 @@ public class MainActivity extends Activity {
 
         selection.selector = baseButton("Choose collection location");
         selection.selector.setTextColor(TEXT);
-        selection.selector.setTextSize(15);
+        selection.selector.setTextSize(14);
         selection.selector.setAllCaps(false);
         selection.selector.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
         selection.selector.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        selection.selector.setPadding(dp(14), 0, dp(14), 0);
-        LinearLayout.LayoutParams selectorParams = new LinearLayout.LayoutParams(-1, dp(52));
-        selectorParams.setMargins(0, 0, 0, dp(6));
+        selection.selector.setPadding(dp(12), 0, dp(12), 0);
+        LinearLayout.LayoutParams selectorParams = new LinearLayout.LayoutParams(-1, dp(44));
+        selectorParams.setMargins(0, 0, 0, dp(2));
         root.addView(selection.selector, selectorParams);
 
         updateCollectionLocationSelection(selection);
@@ -1765,6 +1789,12 @@ public class MainActivity extends Activity {
             return "Collection was " + elapsed + " day" + (elapsed == 1 ? "" : "s") + " ago";
         }
 
+        return estimatedDeliveryCountdown(orderPrefs);
+    }
+
+    private String estimatedDeliveryCountdown(
+        android.content.SharedPreferences orderPrefs
+    ) {
         Date start = parseOrderDate(orderPrefs.getString("order_edd_start", ""));
         if (start == null) return "";
         long days = daysFromToday(start);
@@ -1806,6 +1836,33 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private void showDeliveryCountdown(android.content.SharedPreferences orderPrefs) {
+        if (collectionDateTime(orderPrefs) != null) {
+            showCollectionCountdown(orderPrefs);
+            return;
+        }
+        showEstimatedDeliveryCountdown(orderPrefs);
+    }
+
+    private void showEstimatedDeliveryCountdown(
+        android.content.SharedPreferences orderPrefs
+    ) {
+        String countdown = estimatedDeliveryCountdown(orderPrefs);
+        if (countdown.isEmpty()) return;
+        String deliveryWindow = homeEddRange(
+            orderPrefs.getString("order_edd_start", ""),
+            orderPrefs.getString("order_edd_end", "")
+        );
+        new AlertDialog.Builder(this)
+            .setTitle("Estimated delivery countdown")
+            .setMessage(
+                countdown
+                    + (deliveryWindow.isEmpty() ? "" : "\n\nDelivery window: " + deliveryWindow)
+            )
+            .setPositiveButton("Close", null)
+            .show();
     }
 
     private void showCollectionCountdown(android.content.SharedPreferences orderPrefs) {
@@ -1990,8 +2047,8 @@ public class MainActivity extends Activity {
     ) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        card.setBackground(rounded(SURFACE, dp(18), BORDER, 1));
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setBackground(rounded(SURFACE, dp(14), BORDER, 1));
 
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.HORIZONTAL);
@@ -2001,30 +2058,32 @@ public class MainActivity extends Activity {
         TextView marker = text(number, 12, TEXT, true);
         marker.setGravity(Gravity.CENTER);
         marker.setBackground(rounded(TESLA_RED, dp(18), TESLA_RED, 0));
-        heading.addView(marker, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        heading.addView(marker, new LinearLayout.LayoutParams(dp(32), dp(32)));
 
         LinearLayout headingText = new LinearLayout(this);
         headingText.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams headingTextParams = new LinearLayout.LayoutParams(0, -2, 1f);
-        headingTextParams.setMargins(dp(12), 0, 0, 0);
+        headingTextParams.setMargins(dp(10), 0, 0, 0);
         heading.addView(headingText, headingTextParams);
 
-        TextView titleView = text(title, 14, TEXT, true);
+        TextView titleView = text(title, 13, TEXT, true);
         titleView.setLetterSpacing(0.08f);
         headingText.addView(titleView);
-        TextView subtitleView = text(subtitle, 13, MUTED, false);
-        subtitleView.setPadding(0, dp(2), 0, 0);
+        TextView subtitleView = text(subtitle, 11, MUTED, false);
+        subtitleView.setSingleLine(true);
+        subtitleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        subtitleView.setPadding(0, dp(1), 0, 0);
         headingText.addView(subtitleView);
 
         TextView disclosure = text("⌄", 22, MUTED, true);
         disclosure.setGravity(Gravity.CENTER);
         disclosure.setContentDescription("Expand " + title.toLowerCase(Locale.UK));
-        heading.addView(disclosure, new LinearLayout.LayoutParams(dp(32), dp(40)));
+        heading.addView(disclosure, new LinearLayout.LayoutParams(dp(28), dp(34)));
 
         Space space = new Space(this);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.addView(space, new LinearLayout.LayoutParams(1, dp(14)));
+        content.addView(space, new LinearLayout.LayoutParams(1, dp(8)));
         card.addView(content, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
@@ -2034,6 +2093,7 @@ public class MainActivity extends Activity {
         section.card = card;
         section.content = content;
         section.disclosure = disclosure;
+        section.subtitle = subtitleView;
         return section;
     }
 
@@ -2041,10 +2101,14 @@ public class MainActivity extends Activity {
         for (int index = 0; index < stages.length; index++) {
             boolean expanded = index == expandedIndex;
             stages[index].content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            stages[index].subtitle.setVisibility(expanded ? View.VISIBLE : View.GONE);
             stages[index].disclosure.setText(expanded ? "⌃" : "⌄");
             stages[index].disclosure.setTextColor(expanded ? TESLA_RED : MUTED);
+            stages[index].disclosure.setContentDescription(
+                expanded ? "Collapse section" : "Expand section"
+            );
             stages[index].card.setBackground(
-                rounded(SURFACE, dp(18), expanded ? TESLA_RED : BORDER, 1)
+                rounded(SURFACE, dp(14), expanded ? TESLA_RED : BORDER, 1)
             );
         }
     }
@@ -2054,8 +2118,8 @@ public class MainActivity extends Activity {
         connectorRow.setGravity(Gravity.CENTER_HORIZONTAL);
         View connector = new View(this);
         connector.setBackgroundColor(TESLA_RED);
-        connectorRow.addView(connector, new LinearLayout.LayoutParams(dp(2), dp(22)));
-        root.addView(connectorRow, new LinearLayout.LayoutParams(-1, dp(22)));
+        connectorRow.addView(connector, new LinearLayout.LayoutParams(dp(2), dp(8)));
+        root.addView(connectorRow, new LinearLayout.LayoutParams(-1, dp(8)));
     }
 
     private EditText addOrderSelectorField(
@@ -2067,7 +2131,7 @@ public class MainActivity extends Activity {
     ) {
         TextView fieldLabel = text(label, 11, MUTED, true);
         fieldLabel.setLetterSpacing(0.08f);
-        fieldLabel.setPadding(dp(2), 0, dp(2), dp(6));
+        fieldLabel.setPadding(dp(2), 0, dp(2), dp(4));
         root.addView(fieldLabel);
 
         EditText input = new EditText(this);
@@ -2076,13 +2140,13 @@ public class MainActivity extends Activity {
         input.setContentDescription(contentDescription);
         input.setTextColor(TEXT);
         input.setHintTextColor(MUTED);
-        input.setTextSize(14);
+        input.setTextSize(13);
         input.setSingleLine(true);
         input.setGravity(Gravity.CENTER_VERTICAL);
-        input.setPadding(dp(12), 0, dp(10), 0);
+        input.setPadding(dp(10), 0, dp(8), 0);
         input.setBackground(rounded(SURFACE_2, dp(12), BORDER, 1));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
-        params.setMargins(0, 0, 0, dp(12));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(44));
+        params.setMargins(0, 0, 0, dp(8));
         root.addView(input, params);
         return input;
     }
@@ -2094,8 +2158,8 @@ public class MainActivity extends Activity {
         String value,
         int inputType
     ) {
-        TextView fieldLabel = text(label, 14, TEXT, true);
-        fieldLabel.setPadding(dp(2), 0, dp(2), dp(6));
+        TextView fieldLabel = text(label, 12, TEXT, true);
+        fieldLabel.setPadding(dp(2), 0, dp(2), dp(4));
         root.addView(fieldLabel);
 
         EditText input = new EditText(this);
@@ -2103,13 +2167,14 @@ public class MainActivity extends Activity {
         input.setHint(hint);
         input.setTextColor(TEXT);
         input.setHintTextColor(MUTED);
-        input.setTextSize(16);
+        input.setTextSize(14);
         input.setInputType(inputType);
         input.setSingleLine(true);
-        input.setPadding(dp(14), dp(12), dp(14), dp(12));
+        input.setGravity(Gravity.CENTER_VERTICAL);
+        input.setPadding(dp(12), 0, dp(12), 0);
         input.setBackground(rounded(SURFACE, dp(12), BORDER, 1));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(0, 0, 0, dp(14));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(44));
+        params.setMargins(0, 0, 0, dp(8));
         root.addView(input, params);
         return input;
     }
